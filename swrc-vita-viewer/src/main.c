@@ -1,5 +1,5 @@
 /* SWRC v9 geometry viewer for PS Vita. No original game engine or gameplay.
- * Data: ux0:data/SWRV00002/scene.swv (generated from the user's own PC files).
+ * Data: ux0:data/SWRV00003/scene.swv (generated from the user's own PC files).
  * Padded, 64-byte v9 header/chunk structures. Safe enough for diagnostics.
  */
 #include <vitaGL.h>
@@ -15,6 +15,7 @@
 #include <string.h>
 #include <errno.h>
 #include <math.h>
+#include <stddef.h>
 
 #define VIEW 35000.0f
 #define DEG 0.0000958737992429f
@@ -37,7 +38,7 @@ _Static_assert(sizeof(Chunk)==64,"chunk size");
 _Static_assert(sizeof(Vertex)==36,"vertex size");
 
 static void logmsg(const char *msg) {
- FILE *f=fopen("ux0:data/SWRV00002-viewer.log","a");
+ FILE *f=fopen("ux0:data/SWRV00003-viewer.log","a");
  if(f){fprintf(f,"%s\n",msg);fclose(f);}
 }
 static uint32_t crc32(const unsigned char *p,size_t n) {
@@ -248,39 +249,123 @@ static int load_textures(const char *path){
  free(buf);return 1;
 }
 
+/* v18 performance path: submit static geometry from two persistent GPU buffers
+ * instead of re-uploading client-side vertex/index arrays on every frame.
+ * SELECT toggles the existing v17 path for an A/B performance comparison.
+ */
+typedef struct {uint32_t vbytes,ibytes;} CacheOffset;
+static CacheOffset swrc_offsets[8192];
+static GLuint swrc_bufs[2]={0,0};
+static int swrc_gpu_cache=0,swrc_use_cache=0;
+static uint32_t swrc_last_calls=0,swrc_last_tris=0;
+static int swrc_last_textures=0;
+
+static void free_geometry_buffers(void){
+ if(swrc_bufs[0]||swrc_bufs[1]){
+  glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+  glDeleteBuffers(2,swrc_bufs);swrc_bufs[0]=swrc_bufs[1]=0;
+ }
+ swrc_gpu_cache=0;swrc_use_cache=0;
+}
+
+static int make_geometry_buffers(Scene *scene){
+ if(!scene->raw||scene->h->chunk_count>8192)return 0;
+ uint64_t totalv=0,totali=0;
+ for(uint32_t i=0;i<scene->h->chunk_count;i++){
+  Chunk *c=&scene->chunks[i];
+  uint32_t vb=c->vertex_count*sizeof(Vertex),ib=c->index_count*sizeof(uint16_t);
+  if(totalv+vb>0x3fffffff||totali+ib>0x3fffffff)return 0;
+  swrc_offsets[i].vbytes=(uint32_t)totalv;
+  swrc_offsets[i].ibytes=(uint32_t)totali;
+  totalv+=vb;totali+=ib;
+ }
+ char msg[150];
+ snprintf(msg,sizeof(msg),"GEOMETRY GPU CACHE REQUEST %lu VERTEX BYTES %lu INDEX BYTES",(unsigned long)totalv,(unsigned long)totali);
+ logmsg(msg);
+ glGenBuffers(2,swrc_bufs);
+ if(!swrc_bufs[0]||!swrc_bufs[1]){
+  logmsg("GEOMETRY BUFFER GENERATION FAILED");free_geometry_buffers();return 0;
+ }
+ glBindBuffer(GL_ARRAY_BUFFER,swrc_bufs[0]);
+ glBufferData(GL_ARRAY_BUFFER,(GLsizei)totalv,NULL,GL_STATIC_DRAW);
+ GLenum err=glGetError();
+ if(err!=GL_NO_ERROR){
+  snprintf(msg,sizeof(msg),"GEOMETRY VBO ALLOCATION ERROR %04X",(unsigned)err);
+  logmsg(msg);free_geometry_buffers();return 0;
+ }
+ glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,swrc_bufs[1]);
+ glBufferData(GL_ELEMENT_ARRAY_BUFFER,(GLsizei)totali,NULL,GL_STATIC_DRAW);
+ err=glGetError();
+ if(err!=GL_NO_ERROR){
+  snprintf(msg,sizeof(msg),"GEOMETRY IBO ALLOCATION ERROR %04X",(unsigned)err);
+  logmsg(msg);free_geometry_buffers();return 0;
+ }
+ for(uint32_t i=0;i<scene->h->chunk_count;i++){
+  Chunk *c=&scene->chunks[i];
+  glBufferSubData(GL_ARRAY_BUFFER,swrc_offsets[i].vbytes,
+     c->vertex_count*sizeof(Vertex),scene->raw+c->vertex_offset);
+  glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,swrc_offsets[i].ibytes,
+     c->index_count*sizeof(uint16_t),scene->raw+c->index_offset);
+  err=glGetError();
+  if(err!=GL_NO_ERROR){
+   snprintf(msg,sizeof(msg),"GEOMETRY CACHE UPLOAD ERROR CHUNK %u GL %04X",i,(unsigned)err);
+   logmsg(msg);free_geometry_buffers();return 0;
+  }
+ }
+ glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+ swrc_gpu_cache=swrc_use_cache=1;
+ logmsg("GEOMETRY GPU CACHE UPLOADED SUCCESSFULLY (VBO DEFAULT)");
+ return 1;
+}
 static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
  camera(eye,yaw,pitch);
- float transform[16]={1,0,0,0,0,0,-1,0,0,1,0,0,0,0,0,1};
+ const float transform[16]={1,0,0,0,0,0,-1,0,0,1,0,0,0,0,0,1};
  glMultMatrixf(transform);
+ int use_buffers=swrc_use_cache && swrc_gpu_cache;
+ glBindBuffer(GL_ARRAY_BUFFER,use_buffers?swrc_bufs[0]:0);
+ glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,use_buffers?swrc_bufs[1]:0);
  glEnableClientState(GL_VERTEX_ARRAY);
  glEnableClientState(GL_COLOR_ARRAY);
+ uint32_t calls=0,tris=0;
+ int texture_on=0;
+ GLuint current_texture=0;
+ int textured_chunks=0;
  for(uint32_t i=0;i<s->h->chunk_count;i++){
   Chunk *c=&s->chunks[i];
-  /* v15 scenes use reserved=1 for static meshes, 2 for compiled BSP. */
   if(draw_layer!=0 && c->reserved!=0 && c->reserved!=(uint32_t)draw_layer)continue;
   if(!visible(c,eye,yaw,pitch))continue;
   Vertex *v=(Vertex*)(s->raw+c->vertex_offset);
   uint16_t *idx=(uint16_t*)(s->raw+c->index_offset);
-  unsigned texture_id=(unsigned)c->cell_y;
-  if(texture_id && texture_id<=swrc_texture_count && swrc_textures[texture_id]){
-   glEnable(GL_TEXTURE_2D);
-   glBindTexture(GL_TEXTURE_2D,swrc_textures[texture_id]);
+  uint32_t vb=swrc_offsets[i].vbytes,ib=swrc_offsets[i].ibytes;
+  unsigned tid=(unsigned)c->cell_y;
+  GLuint texture=(tid>0&&tid<=swrc_texture_count)?swrc_textures[tid]:0;
+  if(texture){
+   if(!texture_on){glEnable(GL_TEXTURE_2D);glEnableClientState(GL_TEXTURE_COORD_ARRAY);texture_on=1;}
+   if(texture!=current_texture){glBindTexture(GL_TEXTURE_2D,texture);current_texture=texture;}
    glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
-   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-   glTexCoordPointer(2,GL_FLOAT,sizeof(Vertex),v[0].uv);
-  }else{
-   glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-   glDisable(GL_TEXTURE_2D);
+   glTexCoordPointer(2,GL_FLOAT,sizeof(Vertex),
+     use_buffers?(const void*)(uintptr_t)(vb+offsetof(Vertex,uv)):(const void*)v[0].uv);
+   textured_chunks++;
+  }else if(texture_on){
+   glDisableClientState(GL_TEXTURE_COORD_ARRAY);glDisable(GL_TEXTURE_2D);
+   texture_on=0;current_texture=0;
   }
-  glVertexPointer(3,GL_FLOAT,sizeof(Vertex),v[0].xyz);
-  glColorPointer(4,GL_UNSIGNED_BYTE,sizeof(Vertex),v[0].rgba);
-  glDrawElements(GL_TRIANGLES,c->index_count,GL_UNSIGNED_SHORT,idx);
+  glVertexPointer(3,GL_FLOAT,sizeof(Vertex),
+    use_buffers?(const void*)(uintptr_t)vb:(const void*)v[0].xyz);
+  glColorPointer(4,GL_UNSIGNED_BYTE,sizeof(Vertex),
+    use_buffers?(const void*)(uintptr_t)(vb+offsetof(Vertex,rgba)):(const void*)v[0].rgba);
+  glDrawElements(GL_TRIANGLES,c->index_count,GL_UNSIGNED_SHORT,
+    use_buffers?(const void*)(uintptr_t)ib:(const void*)idx);
+  calls++;tris+=c->index_count/3;
  }
  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
  glDisable(GL_TEXTURE_2D);
  glDisableClientState(GL_COLOR_ARRAY);
  glDisableClientState(GL_VERTEX_ARRAY);
+ glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+ swrc_last_calls=calls;swrc_last_tris=tris;swrc_last_textures=textured_chunks;
 }
+
 /* Fixed-width bitmap diagnostic drawn using the already-initialized vitaGL API.
  * No font file, no sprite atlas, and no external library required. */
 static const uint8_t font5x7[36][7]={
@@ -355,14 +440,19 @@ static void show_error_text(const char *s,int line){
  glDrawArrays(GL_TRIANGLES,0,n/3);
  glDisableClientState(GL_VERTEX_ARRAY);
 }
+static int measured_fps=0;
 static void draw_scene_hud(int layer, int overview){
  const char *label=layer==0?"MESH AND BSP":layer==1?"MESH ONLY":"BSP ONLY";
+ char timing_label[60];
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V17 ORIGINAL TEXTURES",0);
+ show_error_text("SWRC V18 PERFORMANCE",0);
  show_error_text(label,1);
- if(overview)show_error_text("OVERVIEW  TRIANGLE TO RETURN",2);
+ snprintf(timing_label,sizeof(timing_label),"FPS %u CALLS %u TRIS %u",measured_fps,swrc_last_calls,swrc_last_tris);
+ show_error_text(timing_label,2);
+ show_error_text(swrc_use_cache?"VBO ON  SELECT TO COMPARE":"VBO OFF SELECT TO COMPARE",3);
+ if(overview)show_error_text("OVERVIEW",4);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
  glEnable(GL_DEPTH_TEST);
 }
@@ -372,20 +462,20 @@ static void draw_load_error(void) {
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  show_error_text("SWRC LEVEL NOT LOADED",0);
  show_error_text(scene_error,1);
- show_error_text("SEE UX0 DATA SWRV00002 VIEWER LOG",2);
+ show_error_text("SEE UX0 DATA SWRV00003 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
- FILE *clearlog=fopen("ux0:data/SWRV00002-viewer.log","w");
- if(clearlog){fputs("SWRC v17 separate-install textured level viewer\n",clearlog);fclose(clearlog);}
+ FILE *clearlog=fopen("ux0:data/SWRV00003-viewer.log","w");
+ if(clearlog){fputs("SWRC v18 GPU buffer and draw/swap timing benchmark\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  log_app_mount();
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
-   "ux0:data/SWRV00002/scene.swv",
+   "ux0:data/SWRV00003/scene.swv",
    "app0:scene.swv",
    "app0:/scene.swv",
-   "ux0:app/SWRV00002/scene.swv",
+   "ux0:app/SWRV00003/scene.swv",
    "app0:data/scene.swv",
    "app0:sce_sys/scene.swv"
  };
@@ -398,13 +488,14 @@ int main(void){
  logmsg("VitaGL init call returned");
  const char *texpaths[]={
    "app0:textures.swtx","app0:/textures.swtx",
-   "app0:data/textures.swtx","ux0:app/SWRV00002/textures.swtx",
-   "ux0:data/SWRV00002/textures.swtx"
+   "app0:data/textures.swtx","ux0:app/SWRV00003/textures.swtx",
+   "ux0:data/SWRV00003/textures.swtx"
  };
  int texture_loaded=0;
  for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
    texture_loaded=load_textures(texpaths[i]);
  if(!texture_loaded)logmsg("TEXTURES NOT AVAILABLE: GEOMETRY WILL RENDER UNTEXTURED");
+ if(ok && !make_geometry_buffers(&scene))logmsg("VBO UNAVAILABLE: USING V17 CLIENT ARRAY PATH");
 
  vglWaitVblankStart(GL_TRUE);
  sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
@@ -418,6 +509,10 @@ int main(void){
  int draw_layer=0,overview=0;
  uint32_t prev=0;
  unsigned frame=0;
+ int64_t bench_start=sceKernelGetSystemTimeWide();
+ uint64_t draw_us=0,swap_us=0;
+ unsigned bench_frames=0;
+
  for(;;){
   SceCtrlData pad;memset(&pad,0,sizeof(pad));pad.lx=pad.ly=pad.rx=pad.ry=128;
   if(sceCtrlPeekBufferPositive(0,&pad,1)<1){sceKernelDelayThread(16000);continue;}
@@ -432,6 +527,10 @@ int main(void){
       logmsg("camera overhead arena preset");}
     else{memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;
       logmsg("camera PlayerStart preset");}
+  }
+  if((pad.buttons&SCE_CTRL_SELECT)&&!(prev&SCE_CTRL_SELECT)&&swrc_gpu_cache){
+    swrc_use_cache=!swrc_use_cache;
+    logmsg(swrc_use_cache?"PERF MODE VBO ENABLED":"PERF MODE VBO DISABLED (V17 LEGACY PATH)");
   }
   if((pad.buttons&SCE_CTRL_SQUARE)&&!(prev&SCE_CTRL_SQUARE)){
     draw_layer=(draw_layer+1)%3;
@@ -449,11 +548,29 @@ int main(void){
   pos[1]+=speed*(forward*sinf(yaw)-strafe*cosf(yaw));
   if(pad.buttons&SCE_CTRL_UP)pos[2]+=speed;
   if(pad.buttons&SCE_CTRL_DOWN)pos[2]-=speed;
+  int64_t t0=sceKernelGetSystemTimeWide();
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
   if(ok){draw(&scene,pos,yaw,pitch,draw_layer);draw_scene_hud(draw_layer,overview);}else draw_load_error();
+  int64_t t1=sceKernelGetSystemTimeWide();
   vglSwapBuffers(GL_FALSE);
+  int64_t t2=sceKernelGetSystemTimeWide();
+  if(t1>t0)draw_us+=(uint64_t)(t1-t0);
+  if(t2>t1)swap_us+=(uint64_t)(t2-t1);
+  bench_frames++;
+  if(t2-bench_start>=3000000){
+   uint64_t elapsed=(uint64_t)(t2-bench_start);
+   measured_fps=(int)((uint64_t)bench_frames*1000000u/elapsed);
+   char perf[220];
+   snprintf(perf,sizeof(perf),"PERF mode=%s frames=%u fps=%u calls=%u tris=%u textured=%d drawCPUms=%u swapWaitMs=%u",
+     swrc_use_cache?"VBO":"LEGACY",bench_frames,measured_fps,
+     swrc_last_calls,swrc_last_tris,swrc_last_textures,
+     (unsigned)((draw_us/bench_frames)/1000u),(unsigned)((swap_us/bench_frames)/1000u));
+   logmsg(perf);
+   bench_frames=0;draw_us=0;swap_us=0;bench_start=t2;
+  }
   if(++frame==1)logmsg("First frame submitted");
  }
+ free_geometry_buffers();
  release(&scene);
  logmsg("Exited normally");
  return 0;
