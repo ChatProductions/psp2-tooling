@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 #include <math.h>
 
 #define VIEW 35000.0f
@@ -40,24 +41,32 @@ static uint32_t crc32(const unsigned char *p,size_t n) {
  for(size_t i=0;i<n;i++){c^=p[i];for(int j=0;j<8;j++)c=(c>>1)^((c&1)?0xedb88320u:0);}
  return ~c;
 }
+static char scene_error[180];
 static int load(Scene *s,const char *path) {
  memset(s,0,sizeof(*s));
- FILE *f=fopen(path,"rb");if(!f)return 0;
- if(fseek(f,0,SEEK_END)){fclose(f);return 0;}
+ FILE *f=fopen(path,"rb");
+ if(!f){snprintf(scene_error,sizeof(scene_error),"scene open %s failed errno=%d",path,errno);return 0;}
+ if(fseek(f,0,SEEK_END)){fclose(f);snprintf(scene_error,sizeof(scene_error),"scene seek-end failed %s",path);return 0;}
  long len=ftell(f);
- if(len<64||len>96*1024*1024||fseek(f,0,SEEK_SET)){fclose(f);return 0;}
+ if(len<64||len>96*1024*1024||fseek(f,0,SEEK_SET)){
+   fclose(f);snprintf(scene_error,sizeof(scene_error),"scene invalid length %ld: %s",len,path);return 0;
+ }
  s->size=(size_t)len;
  s->raw=malloc(s->size);
- if(!s->raw){fclose(f);return 0;}
+ if(!s->raw){fclose(f);snprintf(scene_error,sizeof(scene_error),"scene malloc %lu failed",(unsigned long)s->size);return 0;}
  size_t n=fread(s->raw,1,s->size,f);fclose(f);
- if(n!=s->size)goto bad;
+ if(n!=s->size){snprintf(scene_error,sizeof(scene_error),"scene truncated read %lu/%lu",(unsigned long)n,(unsigned long)s->size);goto bad;}
  s->h=(Header*)s->raw;
  Header *h=s->h;
  if(memcmp(h->magic,"SWV9",4)||h->version!=9||h->header_size!=64||
     h->vertex_stride!=36||h->chunk_stride!=64||h->reserved!=0||
     h->chunk_table_offset!=64||h->chunk_count<1||h->chunk_count>8192||
-    h->file_size!=s->size||64ull+h->chunk_count*64ull>s->size)goto bad;
- if(crc32(s->raw+64,s->size-64)!=h->crc32)goto bad;
+    h->file_size!=s->size||64ull+h->chunk_count*64ull>s->size){
+    snprintf(scene_error,sizeof(scene_error),"scene invalid header %s",path);goto bad;
+ }
+ if(crc32(s->raw+64,s->size-64)!=h->crc32){
+    snprintf(scene_error,sizeof(scene_error),"scene CRC mismatch %s",path);goto bad;
+ }
  s->chunks=(Chunk*)(s->raw+64);
  for(uint32_t i=0;i<h->chunk_count;i++){
   Chunk *c=&s->chunks[i];
@@ -66,10 +75,15 @@ static int load(Scene *s,const char *path) {
   if(c->vertex_count<3||c->vertex_count>40000||c->index_count<3||
     c->index_count%3||c->index_count/3!=c->bsp_triangles+c->mesh_triangles||
     c->vertex_offset<64+h->chunk_count*64||endv>c->index_offset||
-    endi>s->size||c->vertex_offset%4||c->index_offset%2)goto bad;
+    endi>s->size||c->vertex_offset%4||c->index_offset%2){
+    snprintf(scene_error,sizeof(scene_error),"scene chunk %u invalid layout",i);goto bad;
+  }
   for(int a=0;a<3;a++)if(!isfinite(c->bounds[a])||!isfinite(c->bounds[a+3])||
-     c->bounds[a]>c->bounds[a+3])goto bad;
+     c->bounds[a]>c->bounds[a+3]){
+    snprintf(scene_error,sizeof(scene_error),"scene chunk %u invalid bounds",i);goto bad;
+  }
  }
+ snprintf(scene_error,sizeof(scene_error),"scene OK %s (%u chunks)",path,h->chunk_count);
  return 1;
 bad:
  free(s->raw);memset(s,0,sizeof(*s));return 0;
@@ -121,22 +135,31 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch){
  glDisableClientState(GL_VERTEX_ARRAY);
 }
 static void draw_demo(void){
- static const float pts[]={-150,0,-150, 150,0,-150, 0,0,200};
- static const uint8_t rgb[]={255,80,80,80,255,80,80,80,255};
- camera((float[3]){0,-900,100},1.5707963f,-.10f);
- float t[16]={1,0,0,0,0,0,-1,0,0,1,0,0,0,0,0,1};
- glMultMatrixf(t);
+ /* Screen-space triangle. This stays visible even if scene loading fails. */
+ static const float pts[]={-0.75f,-0.65f,0, 0.75f,-0.65f,0, 0,0.75f,0};
+ static const uint8_t rgb[]={255,80,80, 80,255,80, 80,80,255};
+ glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
+ glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  glEnableClientState(GL_VERTEX_ARRAY);glEnableClientState(GL_COLOR_ARRAY);
  glVertexPointer(3,GL_FLOAT,0,pts);glColorPointer(3,GL_UNSIGNED_BYTE,0,rgb);
  glDrawArrays(GL_TRIANGLES,0,3);
  glDisableClientState(GL_COLOR_ARRAY);glDisableClientState(GL_VERTEX_ARRAY);
+ glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
+ FILE *clearlog=fopen("ux0:data/SWRV00001-viewer.log","w");
+ if(clearlog){fputs("SWRC v11 start\n",clearlog);fclose(clearlog);}
  Scene scene;
  int ok=load(&scene,"ux0:data/SWRV00001/scene.swv");
- if(!ok)ok=load(&scene,"app0:scene.swv");
- logmsg(ok?"SWV9 scene loaded":"No SWV9 scene found; showing fallback triangle");
- if(!vglInit(0x800000)){logmsg("vglInit failed");free(scene.raw);return 2;}
+ if(!ok){logmsg(scene_error);ok=load(&scene,"app0:scene.swv");}
+ if(!ok){logmsg(scene_error);ok=load(&scene,"app0:/scene.swv");}
+ logmsg(scene_error);
+ logmsg(ok?"SWV9 scene loaded":"SWV9 scene not loaded; screen-space triangle fallback");
+ /* vitaGL's return value is res_fallback, not initialization success:
+  * GL_FALSE means normal resolution initialization succeeded.
+  * The v10 code checked !vglInit(), causing it to exit immediately. */
+ GLboolean init_fallback=vglInit(0x800000);
+ logmsg(init_fallback?"vitaGL initialized (resolution fallback)":"vitaGL initialized (normal resolution)");
  vglWaitVblankStart(GL_TRUE);
  sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
  glViewport(0,0,960,544);
@@ -147,6 +170,7 @@ int main(void){
  const float spawn[3]={2101.9768f,1829.5629f,-1901.798f};
  float pos[3]={spawn[0],spawn[1],spawn[2]},yaw=-9815.0f*DEG,pitch=0;
  uint32_t prev=0;
+ unsigned frame=0;
  for(;;){
   SceCtrlData pad;memset(&pad,0,sizeof(pad));pad.lx=pad.ly=pad.rx=pad.ry=128;
   if(sceCtrlPeekBufferPositive(0,&pad,1)<1){sceKernelDelayThread(16000);continue;}
@@ -166,6 +190,7 @@ int main(void){
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
   if(ok)draw(&scene,pos,yaw,pitch);else draw_demo();
   vglSwapBuffers(GL_FALSE);
+  if(++frame==1)logmsg("First frame submitted");
  }
  free(scene.raw);
  logmsg("Exited normally");
