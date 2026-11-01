@@ -1,0 +1,48 @@
+name: SWRC Vita viewer build
+on:
+  push:
+    branches: [swrc-vita-viewer-build]
+    paths:
+      - 'swrc-vita-viewer/**'
+      - '.github/workflows/swrc-vita-viewer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      VITASDK: ${{ github.workspace }}/.vitasdk
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake git make curl bzip2 pkg-config
+      - name: Install VitaSDK (CI only)
+        run: |
+          git clone --depth 1 https://github.com/vitasdk/vdpm.git /tmp/vdpm
+          /tmp/vdpm/bootstrap-vitasdk.sh
+          echo "$VITASDK/bin" >> "$GITHUB_PATH"
+          ls -la "$VITASDK/bin" | head
+      - name: Install vitaGL and shader compiler libraries (CI only)
+        run: |
+          export PATH="$VITASDK/bin:$PATH"
+          vdpm install vitaGL vitaShaRK libmathneon SceShaccCgExt taihen
+          arm-vita-eabi-gcc --version | head -1
+          ls -l "$VITASDK/arm-vita-eabi/lib/libvitaGL.a"
+      - name: Compile VPK
+        run: |
+          export PATH="$VITASDK/bin:$PATH"
+          make -C swrc-vita-viewer -j2
+          unzip -t swrc-vita-viewer/swrc_vita_viewer.vpk
+          ls -lh swrc-vita-viewer/*.vpk
+      - name: Upload viewer VPK and eboot
+        uses: actions/upload-artifact@v4
+        with:
+          name: swrc-vita-viewer
+          path: |
+            swrc-vita-viewer/swrc_vita_viewer.vpk
+            swrc-vita-viewer/eboot.bin
+          if-no-files-found: error
