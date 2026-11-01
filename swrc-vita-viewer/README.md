@@ -21,3 +21,5 @@ Geometry transforms have not been checked on Vita hardware.
 Needs libshacccg.suprx on the Vita.
 
 Build in GitHub Actions from branch swrc-vita-viewer-build. If successful, Actions artifacts contain swrc_vita_viewer.vpk.
+
+Version 12 fixes the native app0 scene loading fallback and records every failed file path and error code. If the device still displays the fallback, read ux0:data/SWRV00001-viewer.log; VPK must contain scene.swv in its root.
