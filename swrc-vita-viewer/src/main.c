@@ -1,5 +1,5 @@
 /* SWRC v9 geometry viewer for PS Vita. No original game engine or gameplay.
- * Data: ux0:data/SWRV00003/scene.swv (generated from the user's own PC files).
+ * Data: ux0:data/SWRV00004/scene.swv (generated from the user's own PC files).
  * Padded, 64-byte v9 header/chunk structures. Safe enough for diagnostics.
  */
 #include <vitaGL.h>
@@ -38,7 +38,7 @@ _Static_assert(sizeof(Chunk)==64,"chunk size");
 _Static_assert(sizeof(Vertex)==36,"vertex size");
 
 static void logmsg(const char *msg) {
- FILE *f=fopen("ux0:data/SWRV00003-viewer.log","a");
+ FILE *f=fopen("ux0:data/SWRV00004-viewer.log","a");
  if(f){fprintf(f,"%s\n",msg);fclose(f);}
 }
 static uint32_t crc32(const unsigned char *p,size_t n) {
@@ -249,6 +249,70 @@ static int load_textures(const char *path){
  free(buf);return 1;
 }
 
+/* v19 scene excludes an unsupported procedural DemonRays/SunBeam effect.
+ * The sky is an original-texture approximation, not the original UE2 sky engine.
+ * L toggles background to compare screenshot geometry against sky.
+ */
+#define SWRC_SKY_SEGMENTS 32
+#define SWRC_SKY_PANEL 24
+#define SWRC_SKY_TOP 25
+static int swrc_sky_enabled=1;
+
+static void render_sky(float yaw,float pitch){
+ if(!swrc_sky_enabled||swrc_texture_count<SWRC_SKY_TOP||
+    !swrc_textures[SWRC_SKY_PANEL]||!swrc_textures[SWRC_SKY_TOP])return;
+ float wallxyz[(SWRC_SKY_SEGMENTS+1)*6];
+ float walluv[(SWRC_SKY_SEGMENTS+1)*4];
+ float capxyz[(SWRC_SKY_SEGMENTS+2)*3];
+ float capuv[(SWRC_SKY_SEGMENTS+2)*2];
+ const float radius=29000.0f;
+ const float top=22000.0f,bottom=-18000.0f;
+ for(int j=0;j<=SWRC_SKY_SEGMENTS;j++){
+  float a=6.283185307179586f*j/SWRC_SKY_SEGMENTS;
+  float x=radius*cosf(a),y=radius*sinf(a);
+  wallxyz[6*j+0]=x;wallxyz[6*j+1]=y;wallxyz[6*j+2]=top;
+  wallxyz[6*j+3]=x;wallxyz[6*j+4]=y;wallxyz[6*j+5]=bottom;
+  walluv[4*j+0]=(float)j/SWRC_SKY_SEGMENTS;walluv[4*j+1]=0;
+  walluv[4*j+2]=(float)j/SWRC_SKY_SEGMENTS;walluv[4*j+3]=1;
+  capxyz[3*(j+1)+0]=x;
+  capxyz[3*(j+1)+1]=y;
+  capxyz[3*(j+1)+2]=top;
+  capuv[2*(j+1)]=0.5f+0.5f*cosf(a);
+  capuv[2*(j+1)+1]=0.5f+0.5f*sinf(a);
+ }
+ capxyz[0]=0;capxyz[1]=0;capxyz[2]=top;
+ capuv[0]=0.5f;capuv[1]=0.5f;
+ glBindBuffer(GL_ARRAY_BUFFER,0);
+ glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+ glDisable(GL_DEPTH_TEST);
+ glDepthMask(GL_FALSE);
+ glDisableClientState(GL_COLOR_ARRAY);
+ glColor4f(1.0f,1.0f,1.0f,1.0f);
+ glMatrixMode(GL_MODELVIEW);glPushMatrix();
+ float origin[3]={0,0,0};
+ camera(origin,yaw,pitch);
+ const float world_to_eye[16]={1,0,0,0, 0,0,-1,0, 0,1,0,0, 0,0,0,1};
+ glMultMatrixf(world_to_eye);
+ glEnable(GL_TEXTURE_2D);
+ glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+ glEnableClientState(GL_VERTEX_ARRAY);
+ glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+ glBindTexture(GL_TEXTURE_2D,swrc_textures[SWRC_SKY_PANEL]);
+ glVertexPointer(3,GL_FLOAT,0,wallxyz);
+ glTexCoordPointer(2,GL_FLOAT,0,walluv);
+ glDrawArrays(GL_TRIANGLE_STRIP,0,(SWRC_SKY_SEGMENTS+1)*2);
+ glBindTexture(GL_TEXTURE_2D,swrc_textures[SWRC_SKY_TOP]);
+ glVertexPointer(3,GL_FLOAT,0,capxyz);
+ glTexCoordPointer(2,GL_FLOAT,0,capuv);
+ glDrawArrays(GL_TRIANGLE_FAN,0,SWRC_SKY_SEGMENTS+2);
+ glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+ glDisableClientState(GL_VERTEX_ARRAY);
+ glDisable(GL_TEXTURE_2D);
+ glPopMatrix();
+ glDepthMask(GL_TRUE);
+ glEnable(GL_DEPTH_TEST);
+}
+
 /* v18 performance path: submit static geometry from two persistent GPU buffers
  * instead of re-uploading client-side vertex/index arrays on every frame.
  * SELECT toggles the existing v17 path for an A/B performance comparison.
@@ -447,12 +511,13 @@ static void draw_scene_hud(int layer, int overview){
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V18 PERFORMANCE",0);
+ show_error_text("SWRC V19 SKY TEST",0);
  show_error_text(label,1);
  snprintf(timing_label,sizeof(timing_label),"FPS %u CALLS %u TRIS %u",measured_fps,swrc_last_calls,swrc_last_tris);
  show_error_text(timing_label,2);
  show_error_text(swrc_use_cache?"VBO ON  SELECT TO COMPARE":"VBO OFF SELECT TO COMPARE",3);
- if(overview)show_error_text("OVERVIEW",4);
+ show_error_text(swrc_sky_enabled?"SKY ON  PRESS L TO COMPARE":"SKY OFF PRESS L TO COMPARE",4);
+ if(overview)show_error_text("OVERVIEW",5);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
  glEnable(GL_DEPTH_TEST);
 }
@@ -462,20 +527,20 @@ static void draw_load_error(void) {
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  show_error_text("SWRC LEVEL NOT LOADED",0);
  show_error_text(scene_error,1);
- show_error_text("SEE UX0 DATA SWRV00003 VIEWER LOG",2);
+ show_error_text("SEE UX0 DATA SWRV00004 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
- FILE *clearlog=fopen("ux0:data/SWRV00003-viewer.log","w");
- if(clearlog){fputs("SWRC v18 GPU buffer and draw/swap timing benchmark\n",clearlog);fclose(clearlog);}
+ FILE *clearlog=fopen("ux0:data/SWRV00004-viewer.log","w");
+ if(clearlog){fputs("SWRC v19 original sky and corrected SunBeam fallback\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  log_app_mount();
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
-   "ux0:data/SWRV00003/scene.swv",
+   "ux0:data/SWRV00004/scene.swv",
    "app0:scene.swv",
    "app0:/scene.swv",
-   "ux0:app/SWRV00003/scene.swv",
+   "ux0:app/SWRV00004/scene.swv",
    "app0:data/scene.swv",
    "app0:sce_sys/scene.swv"
  };
@@ -488,13 +553,14 @@ int main(void){
  logmsg("VitaGL init call returned");
  const char *texpaths[]={
    "app0:textures.swtx","app0:/textures.swtx",
-   "app0:data/textures.swtx","ux0:app/SWRV00003/textures.swtx",
-   "ux0:data/SWRV00003/textures.swtx"
+   "app0:data/textures.swtx","ux0:app/SWRV00004/textures.swtx",
+   "ux0:data/SWRV00004/textures.swtx"
  };
  int texture_loaded=0;
  for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
    texture_loaded=load_textures(texpaths[i]);
  if(!texture_loaded)logmsg("TEXTURES NOT AVAILABLE: GEOMETRY WILL RENDER UNTEXTURED");
+ if(swrc_texture_count>=25)logmsg("SKY PANEL AND SKY TOP ORIGINAL TEXELS READY; L TOGGLE");
  if(ok && !make_geometry_buffers(&scene))logmsg("VBO UNAVAILABLE: USING V17 CLIENT ARRAY PATH");
 
  vglWaitVblankStart(GL_TRUE);
@@ -528,6 +594,10 @@ int main(void){
     else{memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;
       logmsg("camera PlayerStart preset");}
   }
+  if((pad.buttons&SCE_CTRL_LTRIGGER)&&!(prev&SCE_CTRL_LTRIGGER)){
+    swrc_sky_enabled=!swrc_sky_enabled;
+    logmsg(swrc_sky_enabled?"SKY ORIGINAL PANORAMA ENABLED":"SKY ORIGINAL PANORAMA DISABLED");
+  }
   if((pad.buttons&SCE_CTRL_SELECT)&&!(prev&SCE_CTRL_SELECT)&&swrc_gpu_cache){
     swrc_use_cache=!swrc_use_cache;
     logmsg(swrc_use_cache?"PERF MODE VBO ENABLED":"PERF MODE VBO DISABLED (V17 LEGACY PATH)");
@@ -550,7 +620,7 @@ int main(void){
   if(pad.buttons&SCE_CTRL_DOWN)pos[2]-=speed;
   int64_t t0=sceKernelGetSystemTimeWide();
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-  if(ok){draw(&scene,pos,yaw,pitch,draw_layer);draw_scene_hud(draw_layer,overview);}else draw_load_error();
+  if(ok){render_sky(yaw,pitch);draw(&scene,pos,yaw,pitch,draw_layer);draw_scene_hud(draw_layer,overview);}else draw_load_error();
   int64_t t1=sceKernelGetSystemTimeWide();
   vglSwapBuffers(GL_FALSE);
   int64_t t2=sceKernelGetSystemTimeWide();
