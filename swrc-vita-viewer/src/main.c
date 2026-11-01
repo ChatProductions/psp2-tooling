@@ -261,7 +261,7 @@ static void draw_load_error(void) {
 }
 int main(void){
  FILE *clearlog=fopen("ux0:data/SWRV00001-viewer.log","w");
- if(clearlog){fputs("SWRC v12 native IO start\n",clearlog);fclose(clearlog);}
+ if(clearlog){fputs("SWRC v14 corrected horizontal analog controls\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
@@ -298,12 +298,15 @@ int main(void){
     memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;
   }
   prev=pad.buttons;
-  yaw+=axis(pad.rx)*.04f;
+  /* Moving the right stick right must rotate toward camera-right in world XY. */
+  yaw-=axis(pad.rx)*.04f;
   pitch=fminf(1.5f,fmaxf(-1.5f,pitch-axis(pad.ry)*.027f));
   float forward=-axis(pad.ly),strafe=axis(pad.lx);
   float speed=(pad.buttons&SCE_CTRL_RTRIGGER)?170:45;
-  pos[0]+=speed*(forward*cosf(yaw)-strafe*sinf(yaw));
-  pos[1]+=speed*(forward*sinf(yaw)+strafe*cosf(yaw));
+  /* The renderer uses world (X,Y,Z) -> eye (X,Z,-Y). Camera-right in
+     world XY is (+sin(yaw), -cos(yaw)), not (-sin(yaw),+cos(yaw). */
+  pos[0]+=speed*(forward*cosf(yaw)+strafe*sinf(yaw));
+  pos[1]+=speed*(forward*sinf(yaw)-strafe*cosf(yaw));
   if(pad.buttons&SCE_CTRL_UP)pos[2]+=speed;
   if(pad.buttons&SCE_CTRL_DOWN)pos[2]-=speed;
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
