@@ -1,4 +1,4 @@
-TITLEID := SWRV00001
+TITLEID := SWRV00002
 TARGET := swrc_vita_viewer
 CC := arm-vita-eabi-gcc
 CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wl,-q
@@ -9,7 +9,7 @@ LIBS := -lvitaGL -lstdc++ -lc -lSceCommonDialog_stub -lm -lSceGxm_stub \
 all: $(TARGET).vpk
 
 $(TARGET).vpk: eboot.bin
-	vita-mksfoex -s TITLE_ID=$(TITLEID) "SWRC PC Level Viewer" param.sfo
+	vita-mksfoex -s TITLE_ID=$(TITLEID) "SWRC Textured Level Viewer" param.sfo
 	vita-pack-vpk -s param.sfo -b eboot.bin "$@"
 
 eboot.bin: $(TARGET).velf
