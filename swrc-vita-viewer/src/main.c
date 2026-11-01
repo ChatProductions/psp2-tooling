@@ -158,7 +158,7 @@ static int visible(Chunk *c,float eye[3],float yaw,float pitch){
  if(dx*dx+dy*dy+dz*dz>(VIEW+r)*(VIEW+r))return 0;
  return cosf(pitch)*(cosf(yaw)*dx+sinf(yaw)*dy)+sinf(pitch)*dz>=-r;
 }
-static void draw(Scene *s,float eye[3],float yaw,float pitch){
+static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
  camera(eye,yaw,pitch);
  float transform[16]={1,0,0,0,0,0,-1,0,0,1,0,0,0,0,0,1};
  glMultMatrixf(transform);
@@ -166,6 +166,8 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch){
  glEnableClientState(GL_COLOR_ARRAY);
  for(uint32_t i=0;i<s->h->chunk_count;i++){
   Chunk *c=&s->chunks[i];
+  /* v15 scenes use reserved=1 for static meshes, 2 for compiled BSP. */
+  if(draw_layer!=0 && c->reserved!=0 && c->reserved!=(uint32_t)draw_layer)continue;
   if(!visible(c,eye,yaw,pitch))continue;
   Vertex *v=(Vertex*)(s->raw+c->vertex_offset);
   uint16_t *idx=(uint16_t*)(s->raw+c->index_offset);
@@ -250,6 +252,17 @@ static void show_error_text(const char *s,int line){
  glDrawArrays(GL_TRIANGLES,0,n/3);
  glDisableClientState(GL_VERTEX_ARRAY);
 }
+static void draw_scene_hud(int layer, int overview){
+ const char *label=layer==0?"MESH AND BSP":layer==1?"MESH ONLY":"BSP ONLY";
+ glDisable(GL_DEPTH_TEST);
+ glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
+ glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
+ show_error_text("SWRC V15 UNTEXTURED SCENE",0);
+ show_error_text(label,1);
+ if(overview)show_error_text("OVERVIEW  TRIANGLE TO RETURN",2);
+ glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
+ glEnable(GL_DEPTH_TEST);
+}
 static void draw_load_error(void) {
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
@@ -261,7 +274,7 @@ static void draw_load_error(void) {
 }
 int main(void){
  FILE *clearlog=fopen("ux0:data/SWRV00001-viewer.log","w");
- if(clearlog){fputs("SWRC v14 corrected horizontal analog controls\n",clearlog);fclose(clearlog);}
+ if(clearlog){fputs("SWRC v15 neutral shaded scene, overhead camera and layer inspection\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
@@ -288,6 +301,7 @@ int main(void){
  gluPerspective(75.0,960.0/544.0,24.0,VIEW*2.0);
  const float spawn[3]={2101.9768f,1829.5629f,-1901.798f};
  float pos[3]={spawn[0],spawn[1],spawn[2]},yaw=-9815.0f*DEG,pitch=0;
+ int draw_layer=0,overview=0;
  uint32_t prev=0;
  unsigned frame=0;
  for(;;){
@@ -295,7 +309,19 @@ int main(void){
   if(sceCtrlPeekBufferPositive(0,&pad,1)<1){sceKernelDelayThread(16000);continue;}
   if(pad.buttons&SCE_CTRL_CIRCLE)break;
   if((pad.buttons&SCE_CTRL_START)&&!(prev&SCE_CTRL_START)){
-    memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;
+    memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;overview=0;
+    logmsg("camera reset to PlayerStart");
+  }
+  if((pad.buttons&SCE_CTRL_TRIANGLE)&&!(prev&SCE_CTRL_TRIANGLE)){
+    overview=!overview;
+    if(overview){pos[0]=2500;pos[1]=-5500;pos[2]=9500;yaw=-1.5f;pitch=-1.22f;
+      logmsg("camera overhead arena preset");}
+    else{memcpy(pos,spawn,sizeof(pos));yaw=-9815.0f*DEG;pitch=0;
+      logmsg("camera PlayerStart preset");}
+  }
+  if((pad.buttons&SCE_CTRL_SQUARE)&&!(prev&SCE_CTRL_SQUARE)){
+    draw_layer=(draw_layer+1)%3;
+    logmsg(draw_layer==0?"layer BOTH":draw_layer==1?"layer STATIC MESHES ONLY":"layer BSP ONLY");
   }
   prev=pad.buttons;
   /* Moving the right stick right must rotate toward camera-right in world XY. */
@@ -310,7 +336,7 @@ int main(void){
   if(pad.buttons&SCE_CTRL_UP)pos[2]+=speed;
   if(pad.buttons&SCE_CTRL_DOWN)pos[2]-=speed;
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-  if(ok)draw(&scene,pos,yaw,pitch);else draw_load_error();
+  if(ok){draw(&scene,pos,yaw,pitch,draw_layer);draw_scene_hud(draw_layer,overview);}else draw_load_error();
   vglSwapBuffers(GL_FALSE);
   if(++frame==1)logmsg("First frame submitted");
  }
