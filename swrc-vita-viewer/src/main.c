@@ -1,5 +1,5 @@
 /* SWRC v9 geometry viewer for PS Vita. No original game engine or gameplay.
- * Data: ux0:data/SWRV00001/scene.swv (generated from the user's own PC files).
+ * Data: ux0:data/SWRV00002/scene.swv (generated from the user's own PC files).
  * Padded, 64-byte v9 header/chunk structures. Safe enough for diagnostics.
  */
 #include <vitaGL.h>
@@ -7,6 +7,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/io/fcntl.h>
+#include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,7 @@ _Static_assert(sizeof(Chunk)==64,"chunk size");
 _Static_assert(sizeof(Vertex)==36,"vertex size");
 
 static void logmsg(const char *msg) {
- FILE *f=fopen("ux0:data/SWRV00001-viewer.log","a");
+ FILE *f=fopen("ux0:data/SWRV00002-viewer.log","a");
  if(f){fprintf(f,"%s\n",msg);fclose(f);}
 }
 static uint32_t crc32(const unsigned char *p,size_t n) {
@@ -44,6 +45,26 @@ static uint32_t crc32(const unsigned char *p,size_t n) {
  for(size_t i=0;i<n;i++){c^=p[i];for(int j=0;j<8;j++)c=(c>>1)^((c&1)?0xedb88320u:0);}
  return ~c;
 }
+/* Installer diagnostic: actual visible files under the app0: mount. */
+static void log_app_mount(void){
+ SceUID d=sceIoDopen("app0:");
+ if(d<0){
+  char msg[100];snprintf(msg,sizeof(msg),"app0: DIRECTORY OPEN ERROR %08X",(unsigned)d);logmsg(msg);return;
+ }
+ logmsg("app0: directory listing begins");
+ SceIoDirent ent;
+ for(int i=0;i<32;i++){
+   memset(&ent,0,sizeof(ent));
+   int read=sceIoDread(d,&ent);
+   if(read<=0)break;
+   char msg[150];
+   snprintf(msg,sizeof(msg),"app0: FILE %.80s bytes %llu",ent.d_name,(unsigned long long)ent.d_stat.st_size);
+   logmsg(msg);
+ }
+ sceIoDclose(d);
+ logmsg("app0: directory listing ends");
+}
+
 static char scene_error[180];
 static char scene_trace[640];
 static void release(Scene *s) {
@@ -339,7 +360,7 @@ static void draw_scene_hud(int layer, int overview){
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V16 ORIGINAL TEXTURES",0);
+ show_error_text("SWRC V17 ORIGINAL TEXTURES",0);
  show_error_text(label,1);
  if(overview)show_error_text("OVERVIEW  TRIANGLE TO RETURN",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
@@ -351,19 +372,20 @@ static void draw_load_error(void) {
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  show_error_text("SWRC LEVEL NOT LOADED",0);
  show_error_text(scene_error,1);
- show_error_text("SEE UX0 DATA SWRV00001 VIEWER LOG",2);
+ show_error_text("SEE UX0 DATA SWRV00002 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
- FILE *clearlog=fopen("ux0:data/SWRV00001-viewer.log","w");
- if(clearlog){fputs("SWRC v16 textured scene with native UTX diffuse materials\n",clearlog);fclose(clearlog);}
+ FILE *clearlog=fopen("ux0:data/SWRV00002-viewer.log","w");
+ if(clearlog){fputs("SWRC v17 separate-install textured level viewer\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
+ log_app_mount();
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
-   "ux0:data/SWRV00001/scene.swv",
+   "ux0:data/SWRV00002/scene.swv",
    "app0:scene.swv",
    "app0:/scene.swv",
-   "ux0:app/SWRV00001/scene.swv",
+   "ux0:app/SWRV00002/scene.swv",
    "app0:data/scene.swv",
    "app0:sce_sys/scene.swv"
  };
@@ -376,8 +398,8 @@ int main(void){
  logmsg("VitaGL init call returned");
  const char *texpaths[]={
    "app0:textures.swtx","app0:/textures.swtx",
-   "app0:data/textures.swtx","ux0:app/SWRV00001/textures.swtx",
-   "ux0:data/SWRV00001/textures.swtx"
+   "app0:data/textures.swtx","ux0:app/SWRV00002/textures.swtx",
+   "ux0:data/SWRV00002/textures.swtx"
  };
  int texture_loaded=0;
  for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
