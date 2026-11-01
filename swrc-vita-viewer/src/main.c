@@ -176,16 +176,87 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch){
  glDisableClientState(GL_COLOR_ARRAY);
  glDisableClientState(GL_VERTEX_ARRAY);
 }
-static void draw_demo(void){
- /* Screen-space triangle. This stays visible even if scene loading fails. */
- static const float pts[]={-0.75f,-0.65f,0, 0.75f,-0.65f,0, 0,0.75f,0};
- static const uint8_t rgb[]={255,80,80, 80,255,80, 80,80,255};
+/* Fixed-width bitmap diagnostic drawn using the already-initialized vitaGL API.
+ * No font file, no sprite atlas, and no external library required. */
+static const uint8_t font5x7[36][7]={
+ {14, 17, 19, 21, 25, 17, 14},
+ {4, 12, 4, 4, 4, 4, 14},
+ {14, 17, 1, 2, 4, 8, 31},
+ {30, 1, 1, 14, 1, 1, 30},
+ {2, 6, 10, 18, 31, 2, 2},
+ {31, 16, 16, 30, 1, 1, 30},
+ {14, 16, 16, 30, 17, 17, 14},
+ {31, 1, 2, 4, 8, 8, 8},
+ {14, 17, 17, 14, 17, 17, 14},
+ {14, 17, 17, 15, 1, 1, 14},
+ {14, 17, 17, 31, 17, 17, 17},
+ {30, 17, 17, 30, 17, 17, 30},
+ {14, 17, 16, 16, 16, 17, 14},
+ {30, 17, 17, 17, 17, 17, 30},
+ {31, 16, 16, 30, 16, 16, 31},
+ {31, 16, 16, 30, 16, 16, 16},
+ {14, 17, 16, 23, 17, 17, 15},
+ {17, 17, 17, 31, 17, 17, 17},
+ {31, 4, 4, 4, 4, 4, 31},
+ {7, 2, 2, 2, 18, 18, 12},
+ {17, 18, 20, 24, 20, 18, 17},
+ {16, 16, 16, 16, 16, 16, 31},
+ {17, 27, 21, 21, 17, 17, 17},
+ {17, 25, 21, 19, 17, 17, 17},
+ {14, 17, 17, 17, 17, 17, 14},
+ {30, 17, 17, 30, 16, 16, 16},
+ {14, 17, 17, 17, 21, 18, 13},
+ {30, 17, 17, 30, 20, 18, 17},
+ {15, 16, 16, 14, 1, 1, 30},
+ {31, 4, 4, 4, 4, 4, 4},
+ {17, 17, 17, 17, 17, 17, 14},
+ {17, 17, 17, 17, 17, 10, 4},
+ {17, 17, 17, 21, 21, 21, 10},
+ {17, 17, 10, 4, 10, 17, 17},
+ {17, 17, 10, 4, 4, 4, 4},
+ {31, 1, 2, 4, 8, 16, 31}
+};
+static const uint8_t question_glyph[7]={14,17,2,4,4,0,4};
+static const uint8_t *get_glyph(char ch){
+ if(ch>='0'&&ch<='9')return font5x7[ch-'0'];
+ if(ch>='a'&&ch<='z')ch=(char)(ch-'a'+'A');
+ if(ch>='A'&&ch<='Z')return font5x7[10+ch-'A'];
+ if(ch==' ')return NULL;
+ return question_glyph;
+}
+static void show_error_text(const char *s,int line){
+ static float tri[64*35*6*3];
+ unsigned n=0;
+ float unit_x=0.0061f,unit_y=0.012f;
+ for(int ci=0;ci<47&&s[ci];ci++){
+  const uint8_t *g=get_glyph(s[ci]);if(!g)continue;
+  for(int y=0;y<7;y++)for(int x=0;x<5;x++){
+   if(!(g[y]&(1u<<(4-x))))continue;
+   float left=-0.93f+(ci*6+x)*unit_x,top=0.55f-(line*11+y)*unit_y;
+   float right=left+unit_x,bottom=top-unit_y;
+   if(n+18>sizeof(tri)/sizeof(tri[0]))break;
+   tri[n++]=left;tri[n++]=top;tri[n++]=0;
+   tri[n++]=right;tri[n++]=top;tri[n++]=0;
+   tri[n++]=left;tri[n++]=bottom;tri[n++]=0;
+   tri[n++]=right;tri[n++]=top;tri[n++]=0;
+   tri[n++]=right;tri[n++]=bottom;tri[n++]=0;
+   tri[n++]=left;tri[n++]=bottom;tri[n++]=0;
+  }
+ }
+ glEnableClientState(GL_VERTEX_ARRAY);
+ glDisableClientState(GL_COLOR_ARRAY);
+ glColor3f(1.0f,1.0f,1.0f);
+ glVertexPointer(3,GL_FLOAT,0,tri);
+ glDrawArrays(GL_TRIANGLES,0,n/3);
+ glDisableClientState(GL_VERTEX_ARRAY);
+}
+static void draw_load_error(void) {
+ glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- glEnableClientState(GL_VERTEX_ARRAY);glEnableClientState(GL_COLOR_ARRAY);
- glVertexPointer(3,GL_FLOAT,0,pts);glColorPointer(3,GL_UNSIGNED_BYTE,0,rgb);
- glDrawArrays(GL_TRIANGLES,0,3);
- glDisableClientState(GL_COLOR_ARRAY);glDisableClientState(GL_VERTEX_ARRAY);
+ show_error_text("SWRC LEVEL NOT LOADED",0);
+ show_error_text(scene_error,1);
+ show_error_text("SEE UX0 DATA SWRV00001 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
@@ -236,7 +307,7 @@ int main(void){
   if(pad.buttons&SCE_CTRL_UP)pos[2]+=speed;
   if(pad.buttons&SCE_CTRL_DOWN)pos[2]-=speed;
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-  if(ok)draw(&scene,pos,yaw,pitch);else draw_demo();
+  if(ok)draw(&scene,pos,yaw,pitch);else draw_load_error();
   vglSwapBuffers(GL_FALSE);
   if(++frame==1)logmsg("First frame submitted");
  }
