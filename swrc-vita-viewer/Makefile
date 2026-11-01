@@ -1,4 +1,4 @@
-TITLEID := SWRV00004
+TITLEID := SWRV00005
 TARGET := swrc_vita_viewer
 CC := arm-vita-eabi-gcc
 CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Wl,-q
