@@ -9,7 +9,7 @@ LIBS := -lvitaGL -lstdc++ -lc -lSceCommonDialog_stub -lm -lSceGxm_stub \
 all: $(TARGET).vpk
 
 $(TARGET).vpk: eboot.bin
-	vita-mksfoex -s TITLE_ID=$(TITLEID) "SWRC Sky Geometry Viewer" param.sfo
+	vita-mksfoex -s TITLE_ID=$(TITLEID) "SWRC Arena Expanded Viewer" param.sfo
 	vita-pack-vpk -s param.sfo -b eboot.bin "$@"
 
 eboot.bin: $(TARGET).velf
