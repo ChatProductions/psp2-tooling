@@ -1,5 +1,5 @@
 /* SWRC v9 geometry viewer for PS Vita. No original game engine or gameplay.
- * Data: ux0:data/SWRV00005/scene.swv (generated from the user's own PC files).
+ * Data: ux0:data/SWRV00006/scene.swv (generated from the user's own PC files).
  * Padded, 64-byte v9 header/chunk structures. Safe enough for diagnostics.
  */
 #include <vitaGL.h>
@@ -38,7 +38,7 @@ _Static_assert(sizeof(Chunk)==64,"chunk size");
 _Static_assert(sizeof(Vertex)==36,"vertex size");
 
 static void logmsg(const char *msg) {
- FILE *f=fopen("ux0:data/SWRV00005-viewer.log","a");
+ FILE *f=fopen("ux0:data/SWRV00006-viewer.log","a");
  if(f){fprintf(f,"%s\n",msg);fclose(f);}
 }
 static uint32_t crc32(const unsigned char *p,size_t n) {
@@ -256,9 +256,12 @@ static int load_textures(const char *path){
 #define SWRC_SKY_SEGMENTS 32
 #define SWRC_SKY_PANEL 24
 #define SWRC_SKY_TOP 25
+/* Sky modes: 0=screen-space approximation; 1=previous cylinder; 2=off.
+ * This comparison does not reconstruct the original Unreal sky renderer. */
+static int swrc_sky_mode=0;
 static int swrc_sky_enabled=1;
 
-static void render_sky(float yaw,float pitch){
+static void render_sky_legacy(float yaw,float pitch){
  if(!swrc_sky_enabled||swrc_texture_count<SWRC_SKY_TOP||
     !swrc_textures[SWRC_SKY_PANEL]||!swrc_textures[SWRC_SKY_TOP])return;
  float wallxyz[(SWRC_SKY_SEGMENTS+1)*6];
@@ -311,6 +314,48 @@ static void render_sky(float yaw,float pitch){
  glPopMatrix();
  glDepthMask(GL_TRUE);
  glEnable(GL_DEPTH_TEST);
+}
+
+/* v21: 2D panoramic backdrop. Using a screen-space quad avoids the distant
+ * cylinder's extreme perspective interpolation and lets us compare sky quality
+ * independently of world geometry. Still an approximation, not a UE2 skybox.
+ */
+static void render_sky_screen(float yaw,float pitch){
+ if(swrc_texture_count<SWRC_SKY_PANEL||!swrc_textures[SWRC_SKY_PANEL])return;
+ const float PI=3.14159265358979323846f;
+ const float ucenter=-yaw/(2*PI);
+ const float uhalf=0.112f;   /* 80 degrees across the 960x544 viewport */
+ float vcenter=0.48f-pitch/PI;
+ float vtop=fmaxf(0.0f,fminf(1.0f,vcenter-0.135f));
+ float vbottom=fmaxf(0.0f,fminf(1.0f,vcenter+0.135f));
+ const float xyz[12]={-1.0f, 1.0f,0.0f,  1.0f, 1.0f,0.0f,
+                      -1.0f,-1.0f,0.0f,  1.0f,-1.0f,0.0f};
+ const float uv[8]={ucenter-uhalf,vtop, ucenter+uhalf,vtop,
+                    ucenter-uhalf,vbottom, ucenter+uhalf,vbottom};
+ glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+ glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);
+ glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
+ glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
+ glDisableClientState(GL_COLOR_ARRAY);
+ glEnable(GL_TEXTURE_2D);
+ glBindTexture(GL_TEXTURE_2D,swrc_textures[SWRC_SKY_PANEL]);
+ glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
+ glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+ glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+ glColor4f(1.0f,1.0f,1.0f,1.0f);
+ glEnableClientState(GL_VERTEX_ARRAY);glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+ glVertexPointer(3,GL_FLOAT,0,xyz);
+ glTexCoordPointer(2,GL_FLOAT,0,uv);
+ glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+ glDisableClientState(GL_TEXTURE_COORD_ARRAY);glDisableClientState(GL_VERTEX_ARRAY);
+ glDisable(GL_TEXTURE_2D);
+ glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
+ glDepthMask(GL_TRUE);glEnable(GL_DEPTH_TEST);
+}
+
+static void render_sky(float yaw,float pitch){
+ if(swrc_sky_mode==0)render_sky_screen(yaw,pitch);
+ else if(swrc_sky_mode==1)render_sky_legacy(yaw,pitch);
 }
 
 /* v18 performance path: submit static geometry from two persistent GPU buffers
@@ -519,12 +564,12 @@ static void draw_scene_hud(int layer, int overview){
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V20 ARENA GM",0);
+ show_error_text("SWRC V21 SKY COMPARE",0);
  show_error_text(label,1);
  snprintf(timing_label,sizeof(timing_label),"FPS %u CALLS %u TRIS %u",measured_fps,swrc_last_calls,swrc_last_tris);
  show_error_text(timing_label,2);
  show_error_text(swrc_use_cache?"VBO ON  SELECT TO COMPARE":"VBO OFF SELECT TO COMPARE",3);
- show_error_text(swrc_sky_enabled?"SKY ON  PRESS L TO COMPARE":"SKY OFF PRESS L TO COMPARE",4);
+ show_error_text(swrc_sky_mode==0?"SKY SCREEN  L TO COMPARE":swrc_sky_mode==1?"SKY CYLINDER  L TO COMPARE":"SKY OFF  L TO COMPARE",4);
  show_error_text(swrc_volume_enabled?"VOLUME FX ON  CROSS TO TOGGLE":"VOLUME FX OFF CROSS TO TOGGLE",5);
  if(overview)show_error_text("OVERVIEW",6);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
@@ -536,20 +581,20 @@ static void draw_load_error(void) {
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  show_error_text("SWRC LEVEL NOT LOADED",0);
  show_error_text(scene_error,1);
- show_error_text("SEE UX0 DATA SWRV00005 VIEWER LOG",2);
+ show_error_text("SEE UX0 DATA SWRV00006 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
- FILE *clearlog=fopen("ux0:data/SWRV00005-viewer.log","w");
- if(clearlog){fputs("SWRC v20 Arena_GM expansion; VBO and original sky panorama\n",clearlog);fclose(clearlog);}
+ FILE *clearlog=fopen("ux0:data/SWRV00006-viewer.log","w");
+ if(clearlog){fputs("SWRC v21 two sky projection modes and walker neutral placeholder\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  log_app_mount();
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
-   "ux0:data/SWRV00005/scene.swv",
+   "ux0:data/SWRV00006/scene.swv",
    "app0:scene.swv",
    "app0:/scene.swv",
-   "ux0:app/SWRV00005/scene.swv",
+   "ux0:app/SWRV00006/scene.swv",
    "app0:data/scene.swv",
    "app0:sce_sys/scene.swv"
  };
@@ -562,8 +607,8 @@ int main(void){
  logmsg("VitaGL init call returned");
  const char *texpaths[]={
    "app0:textures.swtx","app0:/textures.swtx",
-   "app0:data/textures.swtx","ux0:app/SWRV00005/textures.swtx",
-   "ux0:data/SWRV00005/textures.swtx"
+   "app0:data/textures.swtx","ux0:app/SWRV00006/textures.swtx",
+   "ux0:data/SWRV00006/textures.swtx"
  };
  int texture_loaded=0;
  for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
@@ -604,8 +649,9 @@ int main(void){
       logmsg("camera PlayerStart preset");}
   }
   if((pad.buttons&SCE_CTRL_LTRIGGER)&&!(prev&SCE_CTRL_LTRIGGER)){
-    swrc_sky_enabled=!swrc_sky_enabled;
-    logmsg(swrc_sky_enabled?"SKY ORIGINAL PANORAMA ENABLED":"SKY ORIGINAL PANORAMA DISABLED");
+    swrc_sky_mode=(swrc_sky_mode+1)%3;
+    swrc_sky_enabled=(swrc_sky_mode!=2);
+    logmsg(swrc_sky_mode==0?"SKY SCREEN PANORAMA":swrc_sky_mode==1?"SKY OLD CYLINDER":"SKY OFF (BACKGROUND CLEAR COLOR)");
   }
   if((pad.buttons&SCE_CTRL_CROSS)&&!(prev&SCE_CTRL_CROSS)){
     swrc_volume_enabled=!swrc_volume_enabled;
