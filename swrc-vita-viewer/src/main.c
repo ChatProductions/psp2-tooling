@@ -158,6 +158,75 @@ static int visible(Chunk *c,float eye[3],float yaw,float pitch){
  if(dx*dx+dy*dy+dz*dz>(VIEW+r)*(VIEW+r))return 0;
  return cosf(pitch)*(cosf(yaw)*dx+sinf(yaw)*dy)+sinf(pitch)*dz>=-r;
 }
+
+/* SWRC v16 standalone texture pack. All pixels derived from original user's UTX,
+ * stored in a separate file and never committed to public GitHub.
+ * Format: 'SWTX' + version,count,filelen,crc32; then count times:
+ * uint16 width,height; uint32 rgba_bytes; RGBA8 pixel bytes.
+ */
+#define MAX_SWRC_TEXTURES 64
+static GLuint swrc_textures[MAX_SWRC_TEXTURES+1];
+static unsigned swrc_texture_count=0;
+static unsigned char *load_tex_bytes(const char *path,size_t *size){
+ SceUID fd=sceIoOpen(path,SCE_O_RDONLY,0);
+ if(fd<0){char m[180];snprintf(m,sizeof(m),"TEXTURE OPEN %s %08X",path,(unsigned)fd);logmsg(m);return NULL;}
+ SceOff end=sceIoLseek(fd,0,SCE_SEEK_END);
+ if(end<20||end>32*1024*1024||sceIoLseek(fd,0,SCE_SEEK_SET)<0){
+  logmsg("TEXTURE INVALID SIZE");sceIoClose(fd);return NULL;
+ }
+ unsigned char *buffer=(unsigned char*)malloc((size_t)end);
+ if(!buffer){logmsg("TEXTURE OUT OF RAM");sceIoClose(fd);return NULL;}
+ size_t off=0;
+ while(off<(size_t)end){
+  int n=sceIoRead(fd,buffer+off,(SceSize)(((size_t)end-off)>65536?65536:(size_t)end-off));
+  if(n<=0)break;
+  off+=(size_t)n;
+ }
+ sceIoClose(fd);
+ if(off!=(size_t)end){logmsg("TEXTURE IO SHORT READ");free(buffer);return NULL;}
+ *size=(size_t)end;return buffer;
+}
+static uint16_t swrc_u16(const unsigned char *p){return (uint16_t)(p[0]|(p[1]<<8));}
+static uint32_t swrc_u32(const unsigned char *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
+static int load_textures(const char *path){
+ size_t size=0;unsigned char *buf=load_tex_bytes(path,&size);
+ if(!buf)return 0;
+ if(memcmp(buf,"SWTX",4)||swrc_u32(buf+4)!=1||swrc_u32(buf+12)!=size||crc32(buf+20,size-20)!=swrc_u32(buf+16)){
+  logmsg("TEXTURE PACK HEADER OR CRC INVALID");free(buf);return 0;
+ }
+ uint32_t n=swrc_u32(buf+8);
+ if(n<1||n>MAX_SWRC_TEXTURES){logmsg("TEXTURE COUNT INVALID");free(buf);return 0;}
+ size_t pos=20;
+ for(uint32_t i=0;i<n;i++){
+  if(pos+8>size){logmsg("TEXTURE HEADER TRUNCATED");free(buf);return 0;}
+  uint32_t w=swrc_u16(buf+pos),h=swrc_u16(buf+pos+2),bytes=swrc_u32(buf+pos+4);
+  pos+=8;
+  if(w<4||h<4||w>1024||h>1024||bytes!=w*h*4||bytes>size-pos){
+   logmsg("TEXTURE ENTRY INVALID");free(buf);return 0;
+  }
+  pos+=bytes;
+ }
+ if(pos!=size){logmsg("TEXTURE TRAILING DATA");free(buf);return 0;}
+ memset(swrc_textures,0,sizeof(swrc_textures));
+ glGenTextures(n,swrc_textures+1);
+ pos=20;
+ for(uint32_t i=0;i<n;i++){
+  uint32_t w=swrc_u16(buf+pos),h=swrc_u16(buf+pos+2),bytes=swrc_u32(buf+pos+4);
+  pos+=8;
+  glBindTexture(GL_TEXTURE_2D,swrc_textures[i+1]);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,w,h,0,GL_RGBA,GL_UNSIGNED_BYTE,buf+pos);
+  pos+=bytes;
+ }
+ glBindTexture(GL_TEXTURE_2D,0);
+ swrc_texture_count=n;
+ char msg[180];snprintf(msg,sizeof(msg),"SWRC TEXTURES LOADED %u FROM %s",n,path);logmsg(msg);
+ free(buf);return 1;
+}
+
 static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
  camera(eye,yaw,pitch);
  float transform[16]={1,0,0,0,0,0,-1,0,0,1,0,0,0,0,0,1};
@@ -171,10 +240,23 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
   if(!visible(c,eye,yaw,pitch))continue;
   Vertex *v=(Vertex*)(s->raw+c->vertex_offset);
   uint16_t *idx=(uint16_t*)(s->raw+c->index_offset);
+  unsigned texture_id=(unsigned)c->cell_y;
+  if(texture_id && texture_id<=swrc_texture_count && swrc_textures[texture_id]){
+   glEnable(GL_TEXTURE_2D);
+   glBindTexture(GL_TEXTURE_2D,swrc_textures[texture_id]);
+   glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+   glTexCoordPointer(2,GL_FLOAT,sizeof(Vertex),v[0].uv);
+  }else{
+   glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+   glDisable(GL_TEXTURE_2D);
+  }
   glVertexPointer(3,GL_FLOAT,sizeof(Vertex),v[0].xyz);
   glColorPointer(4,GL_UNSIGNED_BYTE,sizeof(Vertex),v[0].rgba);
   glDrawElements(GL_TRIANGLES,c->index_count,GL_UNSIGNED_SHORT,idx);
  }
+ glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+ glDisable(GL_TEXTURE_2D);
  glDisableClientState(GL_COLOR_ARRAY);
  glDisableClientState(GL_VERTEX_ARRAY);
 }
@@ -257,7 +339,7 @@ static void draw_scene_hud(int layer, int overview){
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V15 UNTEXTURED SCENE",0);
+ show_error_text("SWRC V16 ORIGINAL TEXTURES",0);
  show_error_text(label,1);
  if(overview)show_error_text("OVERVIEW  TRIANGLE TO RETURN",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
@@ -274,7 +356,7 @@ static void draw_load_error(void) {
 }
 int main(void){
  FILE *clearlog=fopen("ux0:data/SWRV00001-viewer.log","w");
- if(clearlog){fputs("SWRC v15 neutral shaded scene, overhead camera and layer inspection\n",clearlog);fclose(clearlog);}
+ if(clearlog){fputs("SWRC v16 textured scene with native UTX diffuse materials\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
@@ -292,6 +374,16 @@ int main(void){
  logmsg(ok?"SWV9 ready: rendering world geometry":"SWV9 unavailable: see SCENE LOAD FAILURE");
  (void)vglInit(0x800000);
  logmsg("VitaGL init call returned");
+ const char *texpaths[]={
+   "app0:textures.swtx","app0:/textures.swtx",
+   "app0:data/textures.swtx","ux0:app/SWRV00001/textures.swtx",
+   "ux0:data/SWRV00001/textures.swtx"
+ };
+ int texture_loaded=0;
+ for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
+   texture_loaded=load_textures(texpaths[i]);
+ if(!texture_loaded)logmsg("TEXTURES NOT AVAILABLE: GEOMETRY WILL RENDER UNTEXTURED");
+
  vglWaitVblankStart(GL_TRUE);
  sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
  glViewport(0,0,960,544);
