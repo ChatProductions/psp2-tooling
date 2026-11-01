@@ -1,5 +1,5 @@
 /* SWRC v9 geometry viewer for PS Vita. No original game engine or gameplay.
- * Data: ux0:data/SWRV00004/scene.swv (generated from the user's own PC files).
+ * Data: ux0:data/SWRV00005/scene.swv (generated from the user's own PC files).
  * Padded, 64-byte v9 header/chunk structures. Safe enough for diagnostics.
  */
 #include <vitaGL.h>
@@ -38,7 +38,7 @@ _Static_assert(sizeof(Chunk)==64,"chunk size");
 _Static_assert(sizeof(Vertex)==36,"vertex size");
 
 static void logmsg(const char *msg) {
- FILE *f=fopen("ux0:data/SWRV00004-viewer.log","a");
+ FILE *f=fopen("ux0:data/SWRV00005-viewer.log","a");
  if(f){fprintf(f,"%s\n",msg);fclose(f);}
 }
 static uint32_t crc32(const unsigned char *p,size_t n) {
@@ -321,6 +321,7 @@ typedef struct {uint32_t vbytes,ibytes;} CacheOffset;
 static CacheOffset swrc_offsets[8192];
 static GLuint swrc_bufs[2]={0,0};
 static int swrc_gpu_cache=0,swrc_use_cache=0;
+static int swrc_volume_enabled=0; /* optional translucent light-volume preview, off by default */
 static uint32_t swrc_last_calls=0,swrc_last_tris=0;
 static int swrc_last_textures=0;
 
@@ -396,6 +397,8 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
  int textured_chunks=0;
  for(uint32_t i=0;i<s->h->chunk_count;i++){
   Chunk *c=&s->chunks[i];
+  /* Arena_GM VolumetricLight chunks are deliberately opt-in: need procedural shader. */
+  if(c->reserved==4 && !swrc_volume_enabled)continue;
   if(draw_layer!=0 && c->reserved!=0 && c->reserved!=(uint32_t)draw_layer)continue;
   if(!visible(c,eye,yaw,pitch))continue;
   Vertex *v=(Vertex*)(s->raw+c->vertex_offset);
@@ -418,8 +421,13 @@ static void draw(Scene *s,float eye[3],float yaw,float pitch,int draw_layer){
     use_buffers?(const void*)(uintptr_t)vb:(const void*)v[0].xyz);
   glColorPointer(4,GL_UNSIGNED_BYTE,sizeof(Vertex),
     use_buffers?(const void*)(uintptr_t)(vb+offsetof(Vertex,rgba)):(const void*)v[0].rgba);
+  /* Simple additive preview for the optional translucent volume meshes. */
+  if(c->reserved==4){
+   glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE);glDepthMask(GL_FALSE);
+  }
   glDrawElements(GL_TRIANGLES,c->index_count,GL_UNSIGNED_SHORT,
     use_buffers?(const void*)(uintptr_t)ib:(const void*)idx);
+  if(c->reserved==4){glDepthMask(GL_TRUE);glDisable(GL_BLEND);}
   calls++;tris+=c->index_count/3;
  }
  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -511,13 +519,14 @@ static void draw_scene_hud(int layer, int overview){
  glDisable(GL_DEPTH_TEST);
  glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
- show_error_text("SWRC V19 SKY TEST",0);
+ show_error_text("SWRC V20 ARENA GM",0);
  show_error_text(label,1);
  snprintf(timing_label,sizeof(timing_label),"FPS %u CALLS %u TRIS %u",measured_fps,swrc_last_calls,swrc_last_tris);
  show_error_text(timing_label,2);
  show_error_text(swrc_use_cache?"VBO ON  SELECT TO COMPARE":"VBO OFF SELECT TO COMPARE",3);
  show_error_text(swrc_sky_enabled?"SKY ON  PRESS L TO COMPARE":"SKY OFF PRESS L TO COMPARE",4);
- if(overview)show_error_text("OVERVIEW",5);
+ show_error_text(swrc_volume_enabled?"VOLUME FX ON  CROSS TO TOGGLE":"VOLUME FX OFF CROSS TO TOGGLE",5);
+ if(overview)show_error_text("OVERVIEW",6);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
  glEnable(GL_DEPTH_TEST);
 }
@@ -527,20 +536,20 @@ static void draw_load_error(void) {
  glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
  show_error_text("SWRC LEVEL NOT LOADED",0);
  show_error_text(scene_error,1);
- show_error_text("SEE UX0 DATA SWRV00004 VIEWER LOG",2);
+ show_error_text("SEE UX0 DATA SWRV00005 VIEWER LOG",2);
  glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 }
 int main(void){
- FILE *clearlog=fopen("ux0:data/SWRV00004-viewer.log","w");
- if(clearlog){fputs("SWRC v19 original sky and corrected SunBeam fallback\n",clearlog);fclose(clearlog);}
+ FILE *clearlog=fopen("ux0:data/SWRV00005-viewer.log","w");
+ if(clearlog){fputs("SWRC v20 Arena_GM expansion; VBO and original sky panorama\n",clearlog);fclose(clearlog);}
  scene_trace[0]=0;
  log_app_mount();
  Scene scene;memset(&scene,0,sizeof(scene));scene.memblock=-1;
  const char *paths[]={
-   "ux0:data/SWRV00004/scene.swv",
+   "ux0:data/SWRV00005/scene.swv",
    "app0:scene.swv",
    "app0:/scene.swv",
-   "ux0:app/SWRV00004/scene.swv",
+   "ux0:app/SWRV00005/scene.swv",
    "app0:data/scene.swv",
    "app0:sce_sys/scene.swv"
  };
@@ -553,8 +562,8 @@ int main(void){
  logmsg("VitaGL init call returned");
  const char *texpaths[]={
    "app0:textures.swtx","app0:/textures.swtx",
-   "app0:data/textures.swtx","ux0:app/SWRV00004/textures.swtx",
-   "ux0:data/SWRV00004/textures.swtx"
+   "app0:data/textures.swtx","ux0:app/SWRV00005/textures.swtx",
+   "ux0:data/SWRV00005/textures.swtx"
  };
  int texture_loaded=0;
  for(unsigned i=0;i<sizeof(texpaths)/sizeof(texpaths[0])&&!texture_loaded;i++)
@@ -597,6 +606,10 @@ int main(void){
   if((pad.buttons&SCE_CTRL_LTRIGGER)&&!(prev&SCE_CTRL_LTRIGGER)){
     swrc_sky_enabled=!swrc_sky_enabled;
     logmsg(swrc_sky_enabled?"SKY ORIGINAL PANORAMA ENABLED":"SKY ORIGINAL PANORAMA DISABLED");
+  }
+  if((pad.buttons&SCE_CTRL_CROSS)&&!(prev&SCE_CTRL_CROSS)){
+    swrc_volume_enabled=!swrc_volume_enabled;
+    logmsg(swrc_volume_enabled?"ARENA GM VOLUMETRIC LIGHT PREVIEW ON":"ARENA GM VOLUMETRIC LIGHT PREVIEW OFF");
   }
   if((pad.buttons&SCE_CTRL_SELECT)&&!(prev&SCE_CTRL_SELECT)&&swrc_gpu_cache){
     swrc_use_cache=!swrc_use_cache;
