@@ -62,8 +62,7 @@ static uint64_t ntp_now(ntp_clock *c) {
 }
 static void handle_response(ntp_clock *c, const uint8_t *p,
                             const struct sockaddr_in *from) {
-    if (!c->has_peer || from->sin_addr.s_addr != c->peer.sin_addr.s_addr ||
-        from->sin_port != c->peer.sin_port) return;
+    if (!c->has_peer || from->sin_addr.s_addr != c->peer.sin_addr.s_addr) return;
     uint64_t t4 = ntp_now(c);
     uint64_t t1 = be64(p + ORIGINATE_OFFSET);
     uint64_t t2 = be64(p + RECEIVE_OFFSET);
