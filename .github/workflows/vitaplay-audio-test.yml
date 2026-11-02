@@ -1,0 +1,30 @@
+name: VitaPlay source-built audio timing experiment
+
+on:
+  push:
+    branches:
+      - experiment/vitaplay-audio-timing-20261102
+    paths:
+      - .github/workflows/vitaplay-audio-test.yml
+      - vitaplay-audio-test/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:2026.08
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build VitaPlay from upstream C source
+        shell: bash
+        run: bash vitaplay-audio-test/build.sh
+      - name: Upload compiled VPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlay-audio-clock-test
+          path: out/VitaPlay-audio-clock-test.vpk
+          if-no-files-found: error
