@@ -35,7 +35,7 @@ PY
 
 
 # The official full VitaSDK image includes the target libraries.
-make -C upstream/vitaplay -j2 VITASDK="${VITASDK}"
+make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
 
 # Keep the resident kernel plugin IDENTICAL to the original release.
 curl --fail --location --silent --show-error \
