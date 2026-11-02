@@ -1,4 +1,4 @@
-name: VitaPlay source-built audio timing experiment
+name: VitaPlay source-built audio negotiation experiment
 
 on:
   push:
@@ -25,6 +25,6 @@ jobs:
       - name: Upload compiled VPK
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlay-audio-clock-test
-          path: out/VitaPlay-audio-clock-test.vpk
+          name: VitaPlay-audio-PCM48-test
+          path: out/*.vpk
           if-no-files-found: error
