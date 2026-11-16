@@ -7,6 +7,8 @@ cp vitaplay-audio-test/ntp.c upstream/vitaplay/src/ntp.c
 
 # Restore AAC-LC media output and decode with the Vita native SceAudiodec API.
 python3 vitaplay-audio-test/aac_patch.py
+# Diagnostic-only: distinguish TCP close vs socket error on AirPlay control/event.
+python3 vitaplay-audio-test/disconnect_diag.py
 
 # The official full VitaSDK image includes the target libraries.
 make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
@@ -25,7 +27,7 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-audio-v5-mDNS.vpk")
+dest = Path("out/VitaPlay-v6-disconnect-diagnostics.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
     original_exe = a.read("eboot.bin")
@@ -38,6 +40,8 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: native AAC decoder diagnostic not present in eboot")
     if b"v5 mDNS audio capability consistency test" not in updated_exe:
         sys.exit("ERROR: v5 mDNS fix version marker missing from eboot")
+    if b"v6 control TCP peer EOF" not in updated_exe:
+        sys.exit("ERROR: v6 disconnect diagnostics absent from eboot")
     with ZipFile(dest, "w") as out:
         for item in b.infolist():
             payload = original_plugin if item.filename == "vitaplaybt.skprx" else b.read(item.filename)
