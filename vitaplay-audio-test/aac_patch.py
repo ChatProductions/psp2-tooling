@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-only VitaPlay audio v4 patch. No secrets or compiled binary edits."""
+"""Source-only VitaPlay audio v5 patch. No secrets or compiled binary edits."""
 from pathlib import Path
 
 root = Path("upstream/vitaplay")
@@ -132,3 +132,21 @@ replace_one(audio,
 assert "decode_aac(s, &aac, plain, plen)" in audio.read_text()
 assert "-lSceAudiodec_stub" in makefile.read_text()
 print("Audio v4: native AAC decoder integrated and linked.")
+
+
+# Critical AirPlay capability fix: older upstream mdns.c advertises a *different*
+# feature bitmask than /info. The iPhone sees discovery before asking for /info,
+# so both must describe the same audio-capable receiver.
+mdns = root / "src/mdns.c"
+replace_one(mdns, 'put_txt(b, "features", "0x44540380,0x61");',
+                  'put_txt(b, "features", "0x5653aee2,0x61");')
+info_text = info.read_text()
+mdns_text = mdns.read_text()
+assert "#define CARPLAY_FEATURES 0x615653aee2LL" in info_text
+assert 'put_txt(b, "features", "0x5653aee2,0x61");' in mdns_text
+print("Audio v5: mDNS TXT features now equal /info (0x615653aee2).")
+
+# Explicit on-device version marker for log verification.
+main = root / "src/main.c"
+replace_one(main, '    vp_log("VitaPlay starting");',
+                   '    vp_log("VitaPlay starting - v5 mDNS audio capability consistency test");')
