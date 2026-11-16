@@ -1,5 +1,5 @@
 /*
- * Vita A2DP Passive Probe v0.1 for firmware 3.65.
+ * Vita A2DP Passive Probe v0.2 for firmware 3.65.
  * Uses the previously verified SceBt 3.65 RX hook (seg0 + 0x6558).
  *
  * PASSIVE: no outgoing Bluetooth requests, no configuration mutations,
@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-#define LOG_PATH "ux0:data/VitaPlay/a2dp_probe.log"
+#define LOG_PATH "ux0:data/VitaPlay/a2dp_probe_v02.log"
 #define MODULE_NID_365 0x67e0c2eb
 #define SIG_SEGMENT 0
 #define SIG_OFFSET 0x6558
@@ -27,6 +27,7 @@
 #define OTHER_CID MAX_CID
 #define RING_SIZE 128
 #define PREVIEW_PER_CID 5
+#define HEADER_PREVIEW_BYTES 16 /* RTP header + short codec fingerprint, not audio frames */
 
 typedef struct {
     uint16_t cid;
@@ -39,6 +40,8 @@ typedef struct {
     uint8_t sig_id;
     uint8_t first0;
     uint8_t first1;
+    uint8_t header_len;
+    uint8_t header[HEADER_PREVIEW_BYTES];
 } Record;
 
 static Record g_ring[RING_SIZE];
@@ -114,6 +117,10 @@ static int hook_rx(void *connection, const unsigned char *packet, int n) {
             rec.event_kind = 2;
             rec.first0 = packet[8];
             if (n >= 10) rec.first1 = packet[9];
+            unsigned count = (unsigned)(n - 8);
+            if (count > HEADER_PREVIEW_BYTES) count = HEADER_PREVIEW_BYTES;
+            rec.header_len = (uint8_t)count;
+            for (unsigned i = 0; i < count; i++) rec.header[i] = packet[8 + i];
             enqueue(&rec);
         }
     }
@@ -162,8 +169,14 @@ static void drain(void) {
         } else if (rec.event_kind == 2) {
             /* Header-only sample: first two bytes could be AVDTP/RTP, or another service.
              * We deliberately do not label all data CIDs as A2DP or log music payloads. */
-            log_line("DATA cid=0x%04x l2cap_bytes=%u first2=%02x %02x",
-                     rec.cid, rec.payload_len, rec.first0, rec.first1);
+            char shorthex[HEADER_PREVIEW_BYTES * 3 + 1];
+            unsigned at = 0;
+            for (unsigned i = 0; i < rec.header_len; i++)
+                at += (unsigned)snprintf(shorthex + at, sizeof(shorthex) - at,
+                                         "%02x%s", rec.header[i], i + 1 < rec.header_len ? " " : "");
+            shorthex[at] = 0;
+            log_line("DATA cid=0x%04x l2cap_bytes=%u prefix%u=%s",
+                     rec.cid, rec.payload_len, rec.header_len, shorthex);
         }
     }
 }
@@ -202,7 +215,7 @@ static int worker_thread(SceSize argc, void *arg) {
 
 int module_start(SceSize argc, const void *args) {
     ksceIoMkdir("ux0:data/VitaPlay", 0777);
-    log_line("=== Vita A2DP passive probe 0.1, FW3.65, metadata-only ===");
+    log_line("=== Vita A2DP passive probe 0.2, FW3.65, RTP/codec-header-only ===");
 
     tai_module_info_t mod;
     mod.size = sizeof(mod);
