@@ -25,7 +25,7 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-audio-v4-AAC.vpk")
+dest = Path("out/VitaPlay-audio-v5-mDNS.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
     original_exe = a.read("eboot.bin")
@@ -36,6 +36,8 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: timing diagnostics missing from new eboot")
     if b"native AAC decoder ready" not in updated_exe:
         sys.exit("ERROR: native AAC decoder diagnostic not present in eboot")
+    if b"v5 mDNS audio capability consistency test" not in updated_exe:
+        sys.exit("ERROR: v5 mDNS fix version marker missing from eboot")
     with ZipFile(dest, "w") as out:
         for item in b.infolist():
             payload = original_plugin if item.filename == "vitaplaybt.skprx" else b.read(item.filename)
