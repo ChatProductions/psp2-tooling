@@ -1,80 +1,75 @@
-# Vita A2DP SBC Receiver v0.6 — experimental
+# Vita A2DP SBC Receiver v0.7 — fixed-rate playback test
 
-A standalone test receiver that now has confirmed working, but choppy, SBC sound on Vita from an iPhone
-to a jailbroken PS Vita 1000/2000 (firmware 3.65).
+Experimental standalone Bluetooth stereo receiver for the PS Vita running
+firmware 3.65, based on the confirmed iPhone-to-Vita SBC stream.
 
-The actual hardware log identified the A2DP media RTP packets as:
-- RTP header starts `80 60`
-- Payload header `08`: eight SBC frames
-- SBC sync `9c`, frame header `bd 33`
-- 44.1 kHz, joint stereo, 16 blocks, eight subbands, bitpool 51
-- 115 bytes/frame × 8 + 13 bytes RTP/A2DP framing = 933 bytes/packet
-- SBC header `BD` contains sample-rate code 2 = **44.1 kHz** (corrected from v0.3)
-- v0.3 rejected the whole stream because it wrongly enforced 48 kHz. v0.6 fixes that gate and sets Vita output to 44.1 kHz.
+The v0.5 hardware test produced audible but choppy audio. The v0.6 test
+was significantly worse: its captured log had 1,903 underruns across
+4,481 output blocks, 862 missing RTP sequence numbers and 29 PCM overflows.
+The reported 3,563 kernel drops were already present at the first status
+checkpoint and never increased during that run. They may have accumulated
+before launch, so they should not be mistaken for fresh drops.
 
-This build performs:
-SceBt incoming L2CAP hook -> bounded RTP ring -> userspace syscall ->
-Google libsbc decoder -> 64K-frame PCM FIFO -> adaptive-rate resampler -> sceAudioOut BGM port, 44.1kHz stereo.
-The existing VitaPlay CarPlay connection is NOT used.
+## v0.7 changes
 
-## What changed in v0.6
+- **No sample-by-sample float resampling.** Decoded 44.1-kHz PCM is copied
+  directly into the 44.1-kHz BGM audio port.
+- Uses a producer decoder thread and hardware-paced playback thread.
+- Drops stale queued kernel RTP packets when starting, to avoid replaying
+  audio from an earlier app instance. The kernel plugin is unchanged.
+- Uses a short 186-ms prebuffer before starting, and re-buffers when
+  incoming music pauses rather than constantly draining an empty buffer.
+- Bounded 325-ms PCM queue to avoid multiple seconds of old playback.
+- Minimal integer fades/concealment around a true dropout.
+- Five-fps UI to reserve CPU for audio work.
+- The log separates **new kernel drops since app launch** from the
+  lifetime total and records incoming packets per ~3 seconds, RTP gaps,
+  buffer occupancy, and rebuffer counts.
 
-- A dedicated packet receiver/decoder thread and separate paced playback thread.
-- Initial **372 ms** of decoded PCM prebuffering to absorb Bluetooth arrival jitter.
-- A continuous audio-output stream even during packet starvation, with short fades
-  instead of stopping the output call. Such concealment is intentionally simple.
-- Adaptive playback-rate correction between **0.94× and 1.018×** based on FIFO
-  occupancy. This trades a small amount of pitch/speed variation for smoother output.
-- 10-fps UI to reduce CPU contention, RTP sequence-gap and underrun telemetry.
-- The **kernel plugin is unchanged from v0.5**. Replace just the VPK; no reboot.
+Codec is SBC, 44.1 kHz, joint stereo, bitpool 51. The known iPhone
+stream uses 12-byte RTP header + 1-byte A2DP SBC header +
+8 SBC frames of 115 bytes each (933 bytes per packet).
 
-The log includes `fifo`, `tempo`, `underruns`, `rtp_gaps`, `kernel_drops`,
-`pcm_overflow`, and `elapsed_ms`. If music is still choppy, upload
-`ux0:data/VitaPlay/sbc_playback.log`.
+## Installation: v0.5 or v0.6 already installed
 
+Install `VitaA2DP.vpk` over the existing application. The matching
+kernel plugin `a2dp_probe.skprx` is **unchanged**, so do not replace
+it or reboot the Vita. Leave VitaPlay itself closed during the test.
 
-## Limitations
+The VPK starts the standalone receiver; on iPhone, select
+**PlayStation Vita** as audio output and play music. The log is:
 
-**v0.5 produced audible but choppy sound on actual Vita hardware. v0.6 playback timing remains unverified.**
-The kernel component is reverse-engineered, unsafe if it crashes. Do not
-consider this a finished Bluetooth audio sink. The playback app supports
-only the known iPhone SBC format (8 frames/packet, RTP PT 96,
-no CSRC or extension). Other phones may differ.
-The receiver does not enable new Bluetooth profiles and does not send
-AVDTP commands or implement microphone/HFP.
-If iPhone doesn't pair with Vita, that is not fixed by this app.
+`ux0:data/VitaPlay/sbc_playback.log`
 
-## Installation
+For the best comparable test, open the receiver **before** starting music,
+then let the music play for about 60 seconds. The app reports
+**NEW kernel drops**, **RTP missing**, **Rebuffer**, and **PCM buffer ms**.
+Press START to exit and upload the log. Music can still be choppy if
+the iPhone sends RTP discontinuously, and v0.7 is not hardware-verified yet.
 
-1. Back up your active taiHEN config and make sure you can recover from
-   kernel boot problems. Many Ensō setups use holding L while booting to
-   skip plugins; check your console's setup.
-2. Copy `a2dp_probe.skprx` to `ur0:tai/a2dp_probe.skprx`.
-3. Under `*KERNEL` in the **active** `tai/config.txt`, enable
-   `ur0:tai/a2dp_probe.skprx`. Disable the previous version of the probe,
-   and temporarily disable `vitaplaybt.skprx` so both do not run.
-4. Reboot the Vita. Install `VitaA2DP.vpk` via VitaShell.
-5. Open **Vita A2DP SBC**. Keep VitaPlay closed.
-6. On iPhone, connect/select **PlayStation Vita** as Bluetooth audio
-   output. Play a short music sample.
-7. Look for incoming RTP packets and Output PCM samples increasing. Listen for smooth music, and check the underrun count.
-   If the v0.5 kernel plugin is already installed, **skip steps 1–4** and simply install the new v0.6 VPK.
-8. Press START to quit. If still silent, send both:
-   `ux0:data/VitaPlay/sbc_playback.log` and
-   `ux0:data/VitaPlay/a2dp_probe_v02.log`.
+## New installation
 
-## Rollback
+**Experimental kernel code can crash the console.** Back up the active
+taiHEN config and verify your recovery path first. The user previously
+tested the companion plugin on a 3.65 Vita.
 
-Remove the probe entry from `*KERNEL`, re-enable your original
-`vitaplaybt.skprx`, and reboot. Nothing in the CarPlay application or
-MFi identity files is modified by this build.
+1. Copy `a2dp_probe.skprx` to `ur0:tai/a2dp_probe.skprx`.
+2. In the active `tai/config.txt`, under `*KERNEL`, enable
+   `ur0:tai/a2dp_probe.skprx`. Disable conflicting `vitaplaybt.skprx`
+   for this standalone test.
+3. Reboot and install `VitaA2DP.vpk`.
+4. Launch the receiver; connect/select PlayStation Vita on your iPhone.
+5. Collect `ux0:data/VitaPlay/sbc_playback.log` to diagnose playback.
 
-## Third-party code
+## Reverting
 
-This package links **Google libsbc**, Apache License 2.0,
-revision `6e505650145c9973d08a0bdd5e5f5e1914305e40`.
-See included `Google-libsbc-LICENSE` in ZIP distribution.
+Remove the A2DP probe from `*KERNEL`, restore your old VitaPlay
+Bluetooth plugin line, and reboot. The standalone app has a separate
+VPK and does not overwrite the CarPlay receiver or MFi identity.
+
+## Third-party component
+
+Google libsbc, Apache-2.0, pinned at revision
+`6e505650145c9973d08a0bdd5e5f5e1914305e40`.
+The archive contains the project's license.
 Source: https://github.com/google/libsbc
-
-The Vita A2DP probe and SBC receiver source is available in the
-`experiment/vita-a2dp-sbc-playback-20261117` branch.
