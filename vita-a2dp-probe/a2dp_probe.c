@@ -13,6 +13,7 @@
 #include <psp2kern/kernel/modulemgr.h>
 #include <psp2kern/kernel/threadmgr.h>
 #include <psp2kern/kernel/sysclib.h>
+#include <psp2kern/kernel/sysmem.h> /* safe copy to userspace */
 #include <psp2kern/io/fcntl.h>
 #include <psp2kern/io/stat.h>
 #include <taihen.h>
@@ -56,6 +57,60 @@ static SceUID g_hook = -1;
 static SceUID g_worker = -1;
 static volatile int g_stop;
 
+/* Standalone SBC A2DP receiver: never transmits Bluetooth commands.
+ * SceBt has already accepted the AVDTP channel; intercept the *media* RTP
+ * packet and deliver it intact to the separate usermode decoder VPK.
+ * Producer is SceBt RX; consumer is a single userspace playback thread.
+ */
+#define MEDIA_QUEUE 96
+#define MEDIA_MAX 1200
+typedef struct {
+    unsigned short len;
+    unsigned char payload[MEDIA_MAX];
+} MediaPacket;
+static MediaPacket g_media_queue[MEDIA_QUEUE];
+static volatile unsigned g_mw, g_mr, g_media_seen, g_media_dropped;
+static volatile unsigned g_media_cid;
+static void capture_sbc_media(unsigned cid, const unsigned char *packet, int n, unsigned plen) {
+    if (cid < 0x40 || n < 8 + 14 || plen < 14 || plen > MEDIA_MAX ||
+        (unsigned)(n - 8) < plen) return;
+    const unsigned char *r = packet + 8;
+    /* Specific iPhone SBC/RTP format verified by hardware log v0.2:
+     * RTP v2, CC=0, no extension, dynamic payload type 96, SBC sync at 13.
+     * Avoid false positives from iAP2, PAN, and other L2CAP channels.
+     */
+    if (r[0] != 0x80 || (r[1] & 0x7f) != 96 ||
+        !(r[12] & 0x0f) || r[13] != 0x9c) return;
+    g_media_cid = cid;
+    __sync_add_and_fetch(&g_media_seen, 1);
+    unsigned w = g_mw, rd = g_mr;
+    if (w - rd >= MEDIA_QUEUE) { __sync_add_and_fetch(&g_media_dropped, 1); return; }
+    MediaPacket *dst = &g_media_queue[w % MEDIA_QUEUE];
+    dst->len = (unsigned short)plen;
+    for (unsigned i = 0; i < plen; ++i) dst->payload[i] = r[i];
+    __sync_synchronize();
+    g_mw = w + 1;
+}
+/* VitaSDK exports these as user-callable kernel syscalls.
+ * >0: number of bytes in one *whole RTP packet*, 0: queue empty,
+ * -1: invalid buffer/copy, -2: caller buffer too small.
+ */
+int a2dp_audio_read(void *user_dst, int capacity) {
+    unsigned rd = g_mr;
+    if (rd == g_mw) return 0;
+    MediaPacket *packet = &g_media_queue[rd % MEDIA_QUEUE];
+    int len = packet->len;
+    if (!user_dst || capacity < len) return -2;
+    if (ksceKernelCopyToUser(user_dst, packet->payload, len) < 0) return -1;
+    __sync_synchronize();
+    g_mr = rd + 1;
+    return len;
+}
+int a2dp_audio_packets(void) { return (int)g_media_seen; }
+int a2dp_audio_dropped(void) { return (int)g_media_dropped; }
+int a2dp_audio_cid(void) { return (int)g_media_cid; }
+
+
 static unsigned u16le(const unsigned char *p) {
     return (unsigned)p[0] | ((unsigned)p[1] << 8);
 }
@@ -98,6 +153,7 @@ static int hook_rx(void *connection, const unsigned char *packet, int n) {
         unsigned cid = u16le(packet + 6);
         unsigned plen = u16le(packet + 4);
         unsigned slot = cid < MAX_CID ? cid : OTHER_CID;
+        capture_sbc_media(cid, packet, n, plen);
         unsigned seen = __sync_add_and_fetch(&g_packets[slot], 1);
         __sync_fetch_and_add(&g_bytes[slot], plen);
 
@@ -195,6 +251,8 @@ static void summarize(void) {
                      delta, packets, g_bytes[cid]);
     }
     if (g_dropped) log_line("ring_overflow=%u", g_dropped);
+    if (g_media_seen) log_line("SBC MEDIA cid=0x%02x accepted=%u waiting=%u dropped=%u",
+                               g_media_cid, g_media_seen, g_mw - g_mr, g_media_dropped);
 }
 
 static int worker_thread(SceSize argc, void *arg) {
@@ -215,7 +273,7 @@ static int worker_thread(SceSize argc, void *arg) {
 
 int module_start(SceSize argc, const void *args) {
     ksceIoMkdir("ux0:data/VitaPlay", 0777);
-    log_line("=== Vita A2DP passive probe 0.2, FW3.65, RTP/codec-header-only ===");
+    log_line("=== Vita A2DP SBC receiver v0.3, FW3.65, passive RTP queue ===");
 
     tai_module_info_t mod;
     mod.size = sizeof(mod);
