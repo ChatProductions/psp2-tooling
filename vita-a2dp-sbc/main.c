@@ -1,5 +1,5 @@
 /*
- * Vita A2DP SBC Receiver v0.4 (standalone prototype).
+ * Vita A2DP SBC Receiver v0.5 (standalone prototype).
  * Requires matching experimental kernel plugin installed through taiHEN.
  * Uses Google libsbc (Apache-2.0) to decode inbound iPhone SBC/RTP frames.
  * No Bluetooth pairing, control, injection, or transmitter code in this VPK.
@@ -60,10 +60,10 @@ static void *audio_worker(void *arg) {
     sbc_t decoder;
     sbc_reset(&decoder);
 
-    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, GRAIN,
+    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, GRAIN,
                                    AUDIO_RATE, SCE_AUDIO_OUT_MODE_STEREO);
     g_port = port;
-    report("Audio port open rc=0x%08x, 44.1kHz stereo, samples=%d", (unsigned)port, GRAIN);
+    report("BGM audio port open rc=0x%08x, 44.1kHz stereo, samples=%d", (unsigned)port, GRAIN);
     if (port < 0) return NULL;
 
     while (g_running) {
@@ -157,7 +157,7 @@ static void draw(vita2d_pgf *font, int x, int y, unsigned color, const char *fmt
 int main(void) {
     sceIoMkdir("ux0:data/VitaPlay", 0777);
     g_log = fopen(APP_LOG, "w");
-    report("=== Vita A2DP SBC Receiver v0.4, 44100 Hz stereo ===");
+    report("=== Vita A2DP SBC Receiver v0.5, 44100 Hz stereo ===");
     report("Codec: SBC joint stereo, 16 blocks, 8 subbands; audio RTP type 96");
 
     vita2d_init();
@@ -180,7 +180,7 @@ int main(void) {
         const unsigned white = RGBA8(236,240,245,255);
         const unsigned gray  = RGBA8(155,166,177,255);
         const unsigned green = RGBA8(108,219,152,255);
-        draw(font, 38, 58, white, "Vita A2DP SBC Receiver v0.4");
+        draw(font, 38, 58, white, "Vita A2DP SBC Receiver v0.5");
         draw(font, 38, 100, gray, "Standalone iPhone Bluetooth audio test - VitaPlay closed");
         draw(font, 38, 140, white, "Codec: SBC 44.1 kHz joint stereo, 8 frames x 128 samples");
         draw(font, 38, 180, g_port >= 0 ? green : gray, "sceAudioOut port: %d", g_port);
