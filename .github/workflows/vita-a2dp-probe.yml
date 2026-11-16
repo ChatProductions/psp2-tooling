@@ -1,4 +1,4 @@
-name: Vita A2DP passive probe 3.65
+name: Vita A2DP codec probe v0.2
 
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
           python3 - <<'PY'
           from zipfile import ZipFile, ZIP_DEFLATED
           from pathlib import Path
-          out = Path("out/Vita-A2DP-Passive-Probe-3.65.zip")
+          out = Path("out/Vita-A2DP-Codec-Probe-v02.zip")
           with ZipFile(out, "w", compression=ZIP_DEFLATED) as z:
               z.write("vita-a2dp-probe/a2dp_probe.skprx", "a2dp_probe.skprx")
               z.write("vita-a2dp-probe/README.md", "README.md")
@@ -41,6 +41,6 @@ jobs:
       - name: Upload passive probe
         uses: actions/upload-artifact@v4
         with:
-          name: Vita-A2DP-Passive-Probe-3.65
+          name: Vita-A2DP-Codec-Probe-v02
           path: out/*.zip
           if-no-files-found: error
