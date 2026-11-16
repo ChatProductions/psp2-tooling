@@ -29,13 +29,13 @@ many Ensō/taiHEN setups support holding L at boot to skip plugins.
 4. Pair/connect the iPhone through Vita Settings > Devices > Bluetooth.
 5. On iPhone, select PlayStation Vita in the AirPlay/audio output selector.
 6. Play music for 20–30 seconds.
-7. Transfer ux0:data/VitaPlay/a2dp_probe.log from Vita to PC.
+7. Transfer ux0:data/VitaPlay/a2dp_probe_v02.log from Vita to PC.
 
 ## Log interpretation
 
 - SIG CONNECT_REQ ... PSM=0x0019 [AVDTP] indicates an inbound AVDTP request.
 - SIG CONFIG_REQ / CONFIG_RSP indicates L2CAP channel setup.
-- DATA cid=... records only the first two payload bytes per selected packet.
+- DATA cid=... records only the first 16 bytes of the initial packets per dynamic CID.
 - RATE cid=... reports packet counts over five-second windows.
 
 A high packet rate on a confirmed AVDTP **media** channel suggests audio
@@ -46,3 +46,14 @@ This hook observes incoming packets only and does not record outbound TX.
 
 Remove ur0:tai/a2dp_probe.skprx from *KERNEL, restore the prior
 vitaplaybt.skprx line, and reboot. The CarPlay VPK/MFi files remain unchanged.
+
+## v0.2 / interpreting a media RTP header
+
+For the media CID, RTP v2 audio commonly begins `80 60`. Its first 12 bytes
+are the RTP header. In typical A2DP SBC, byte 13 is the SBC payload
+header (number of SBC frames) and the first SBC frame starts with `9c`
+(byte 14, zero-indexed offset 13). AAC payload will have a different
+fingerprint. The log records only 16 bytes of the first five packets
+from each dynamic CID, not any full music packet.
+
+This confirms the codec fingerprint but does not provide playback.
