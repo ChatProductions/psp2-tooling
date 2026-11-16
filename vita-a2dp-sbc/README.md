@@ -1,4 +1,4 @@
-# Vita A2DP SBC Receiver v0.4 — experimental
+# Vita A2DP SBC Receiver v0.5 — experimental
 
 A first standalone attempt to decode SBC Bluetooth music sent by an iPhone
 to a jailbroken PS Vita 1000/2000 (firmware 3.65).
@@ -10,11 +10,11 @@ The actual hardware log identified the A2DP media RTP packets as:
 - 44.1 kHz, joint stereo, 16 blocks, eight subbands, bitpool 51
 - 115 bytes/frame × 8 + 13 bytes RTP/A2DP framing = 933 bytes/packet
 - SBC header `BD` contains sample-rate code 2 = **44.1 kHz** (corrected from v0.3)
-- v0.3 rejected the whole stream because it wrongly enforced 48 kHz. v0.4 fixes that gate and sets Vita output to 44.1 kHz.
+- v0.3 rejected the whole stream because it wrongly enforced 48 kHz. v0.5 fixes that gate and sets Vita output to 44.1 kHz.
 
 This build performs:
 SceBt incoming L2CAP hook -> bounded RTP ring -> userspace syscall ->
-Google libsbc decoder -> sceAudioOut 44.1kHz stereo.
+Google libsbc decoder -> sceAudioOut BGM port, 44.1kHz stereo.
 The existing VitaPlay CarPlay connection is NOT used.
 
 ## Limitations
