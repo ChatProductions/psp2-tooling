@@ -1,0 +1,46 @@
+name: Vita A2DP passive probe 3.65
+
+on:
+  push:
+    branches:
+      - experiment/vita-a2dp-passive-probe-20261117
+    paths:
+      - .github/workflows/vita-a2dp-probe.yml
+      - vita-a2dp-probe/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:2026.08
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile passive SceBt AVDTP metadata probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C vita-a2dp-probe VITASDK="$VITASDK"
+          test -s vita-a2dp-probe/a2dp_probe.skprx
+          mkdir -p out
+          python3 - <<'PY'
+          from zipfile import ZipFile, ZIP_DEFLATED
+          from pathlib import Path
+          out = Path("out/Vita-A2DP-Passive-Probe-3.65.zip")
+          with ZipFile(out, "w", compression=ZIP_DEFLATED) as z:
+              z.write("vita-a2dp-probe/a2dp_probe.skprx", "a2dp_probe.skprx")
+              z.write("vita-a2dp-probe/README.md", "README.md")
+          with ZipFile(out) as z:
+              assert z.testzip() is None
+              assert len(z.read("a2dp_probe.skprx")) > 1024
+          print("PROBE ZIP:", out, out.stat().st_size)
+          PY
+      - name: Upload passive probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vita-A2DP-Passive-Probe-3.65
+          path: out/*.zip
+          if-no-files-found: error
