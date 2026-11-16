@@ -6,3 +6,12 @@ vita_a2dp_probe:
   main:
     start: module_start
     stop: module_stop
+
+  libraries:
+    VitaA2dpProbe:
+      syscall: true
+      functions:
+        - a2dp_audio_read
+        - a2dp_audio_packets
+        - a2dp_audio_dropped
+        - a2dp_audio_cid
