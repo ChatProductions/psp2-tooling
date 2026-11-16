@@ -39,7 +39,7 @@ build/eboot.bin: build/$(TARGET).velf
 	$(VITASDK)/bin/vita-make-fself -s $< $@
 
 build/param.sfo: | build
-	$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(TITLE_ID) -s APP_VER=00.50 "Vita A2DP SBC" $@
+	$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(TITLE_ID) -s APP_VER=00.60 "Vita A2DP SBC" $@
 
 $(TARGET).vpk: build/eboot.bin build/param.sfo ../vita-a2dp-probe/a2dp_probe.skprx
 	$(VITASDK)/bin/vita-pack-vpk -s build/param.sfo -b build/eboot.bin \
