@@ -1,0 +1,68 @@
+name: Vita A2DP SBC standalone receiver v0.3
+
+on:
+  push:
+    branches:
+      - experiment/vita-a2dp-sbc-playback-20261117
+    paths:
+      - .github/workflows/vita-a2dp-sbc.yml
+      - vita-a2dp-probe/**
+      - vita-a2dp-sbc/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:2026.08
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned Apache-2.0 SBC decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/google/libsbc.git vendor/libsbc
+          git -C vendor/libsbc fetch --depth 1 origin 6e505650145c9973d08a0bdd5e5f5e1914305e40
+          git -C vendor/libsbc checkout --detach 6e505650145c9973d08a0bdd5e5f5e1914305e40
+          test -f vendor/libsbc/LICENSE
+      - name: Build and validate SBC receiver
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C vita-a2dp-probe VITASDK="$VITASDK" -j1
+          test -s vita-a2dp-probe/a2dp_probe.skprx
+          test -s vita-a2dp-probe/stubs/libvita_a2dp_probe_stub_weak.a
+          make -C vita-a2dp-sbc VITASDK="$VITASDK" -j1
+          test -s vita-a2dp-sbc/VitaA2DP.vpk
+          mkdir -p out
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import hashlib
+          with ZipFile("vita-a2dp-sbc/VitaA2DP.vpk") as vpk:
+              assert vpk.testzip() is None
+              items=set(vpk.namelist())
+              assert {'eboot.bin','sce_sys/param.sfo','a2dp_probe.skprx'} <= items, items
+          binary=Path("vita-a2dp-sbc/build/VitaA2DP.elf").read_bytes()
+          assert b"SBC decode failed" in binary
+          assert b"Vita A2DP SBC Receiver v0.3" in binary
+          out=Path("out/Vita-A2DP-SBC-v0.3.zip")
+          with ZipFile(out,"w",compression=ZIP_DEFLATED) as z:
+              z.write("vita-a2dp-sbc/VitaA2DP.vpk", "VitaA2DP.vpk")
+              z.write("vita-a2dp-probe/a2dp_probe.skprx", "a2dp_probe.skprx")
+              z.write("vita-a2dp-sbc/README.md", "README.md")
+              z.write("vendor/libsbc/LICENSE", "Google-libsbc-LICENSE")
+          with ZipFile(out) as z:
+              assert z.testzip() is None
+          print("ZIP:",out, out.stat().st_size)
+          print("VPK_SHA256:",hashlib.sha256(Path("vita-a2dp-sbc/VitaA2DP.vpk").read_bytes()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vita-A2DP-SBC-v0.3
+          path: out/*.zip
+          if-no-files-found: error
