@@ -1,4 +1,4 @@
-name: Vita A2DP SBC standalone receiver v0.6
+name: Vita A2DP SBC standalone receiver v0.7
 
 on:
   push:
@@ -49,8 +49,13 @@ jobs:
               assert {'eboot.bin','sce_sys/param.sfo','a2dp_probe.skprx'} <= items, items
           binary=Path("vita-a2dp-sbc/build/VitaA2DP.elf").read_bytes()
           assert b"SBC decode failed" in binary
-          assert b"Vita A2DP SBC Receiver v0.6" in binary
-          out=Path("out/Vita-A2DP-SBC-v0.6.zip")
+          assert b"RX UNDERRUN" in binary
+          assert b"NEW kernel drops" in binary
+          source=Path("vita-a2dp-sbc/main.c").read_text()
+          assert "float phase" not in source
+          assert "PCM_RING_FRAMES 32768" in source
+          assert b"Vita A2DP SBC Receiver v0.7" in binary
+          out=Path("out/Vita-A2DP-SBC-v0.7.zip")
           with ZipFile(out,"w",compression=ZIP_DEFLATED) as z:
               z.write("vita-a2dp-sbc/VitaA2DP.vpk", "VitaA2DP.vpk")
               z.write("vita-a2dp-probe/a2dp_probe.skprx", "a2dp_probe.skprx")
@@ -63,6 +68,6 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: Vita-A2DP-SBC-v0.6
+          name: Vita-A2DP-SBC-v0.7
           path: out/*.zip
           if-no-files-found: error
