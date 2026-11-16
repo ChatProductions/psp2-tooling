@@ -11,6 +11,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <psp2/ctrl.h>
+#include <psp2/io/stat.h>
 #include <psp2/audioout.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
