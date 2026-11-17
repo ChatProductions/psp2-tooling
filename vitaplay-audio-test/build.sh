@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Source-only audio codec negotiation test: no MFi private identity is used or bundled.
 git clone --depth 1 https://github.com/ironmanx75/vitaplay-release.git upstream
+# Freeze known-working upstream source at the v7 code baseline.
+git -C upstream checkout --detach cb0d0dcb7e952d8e5c068843fe4917c3a31ebf7c
 cp vitaplay-audio-test/ntp.c upstream/vitaplay/src/ntp.c
 
 # Restore AAC-LC media output and decode with the Vita native SceAudiodec API.
