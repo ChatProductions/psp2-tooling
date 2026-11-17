@@ -18,6 +18,8 @@ git clone --depth 1 https://github.com/google/libsbc.git upstream/vitaplay/vendo
 git -C upstream/vitaplay/vendor/libsbc fetch --depth 1 origin 6e505650145c9973d08a0bdd5e5f5e1914305e40
 git -C upstream/vitaplay/vendor/libsbc checkout --detach 6e505650145c9973d08a0bdd5e5f5e1914305e40
 python3 vitaplay-audio-test/hybrid_v9.py
+# v10: keep video initialization first; enable media capture after STREAMING.
+python3 vitaplay-audio-test/video_first_v10.py
 
 # The official full VitaSDK image includes the target libraries.
 make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
@@ -36,7 +38,7 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-v9-BluetoothAudio-WiFiVideo.vpk")
+dest = Path("out/VitaPlay-v10-VideoFirst-BluetoothAudio.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
     updated_plugin = b.read("vitaplaybt.skprx")
@@ -44,8 +46,8 @@ with ZipFile(original) as a, ZipFile(built) as b:
     if original_plugin == updated_plugin:
         sys.exit("ERROR: v9 kernel Bluetooth+audio hook was not rebuilt")
     elf = Path("upstream/vitaplay/btplugin/build/vitaplaybt.elf").read_bytes()
-    if b"vpbt_audio_read" not in elf or b"v9 hybrid SBC RTP" not in elf:
-        sys.exit("ERROR: missing compiled hybrid SBC plugin exports")
+    if b"vpbt_audio_read" not in elf or b"v10 BT RTP" not in elf or b"vpbt_audio_enable" not in elf:
+        sys.exit("ERROR: missing v10 hybrid SBC plugin exports and upstream loss diagnostics")
     updated_exe = b.read("eboot.bin")
     if original_exe == updated_exe:
         sys.exit("ERROR: compiled eboot did not change")
@@ -53,8 +55,12 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: timing diagnostics missing from new eboot")
     if b"native AAC decoder ready" not in updated_exe:
         sys.exit("ERROR: native AAC decoder diagnostic not present in eboot")
-    if b"v9 Bluetooth audio plus Wi-Fi CarPlay video" not in updated_exe:
-        sys.exit("ERROR: missing v9 hybrid startup marker")
+    if b"v10 VIDEO-FIRST CarPlay + Bluetooth SBC diagnostics" not in updated_exe:
+        sys.exit("ERROR: missing v10 VIDEO-FIRST startup marker")
+    if b"v10 VIDEO STREAMING: enable in-app Bluetooth SBC receiver now" not in updated_exe:
+        sys.exit("ERROR: video-first gating logic missing from compiled binary")
+    if b"v10 kernel Bluetooth SBC capture enabled" not in updated_exe:
+        sys.exit("ERROR: usermode kernel capture toggle not compiled")
     if b"v9 HYBRID PLAYBACK START" not in updated_exe:
         sys.exit("ERROR: missing integrated Bluetooth SBC speaker path")
     if b"v6 control TCP peer EOF" not in updated_exe:
