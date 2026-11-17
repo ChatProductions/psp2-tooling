@@ -11,11 +11,15 @@ python3 vitaplay-audio-test/aac_patch.py
 python3 vitaplay-audio-test/disconnect_diag.py
 # v7: Wi-Fi audio setup-capability negotiation and event command dispatch.
 python3 vitaplay-audio-test/wifi_audio_v7.py
+# v8: honor Wi-Fi CarPlay disableBluetooth using tracked iAP2 kernel peer.
+python3 vitaplay-audio-test/wifi_bluetooth_handoff_v8.py
 
 # The official full VitaSDK image includes the target libraries.
 make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
 
-# Keep the resident kernel plugin IDENTICAL to the original release.
+# Verify the v8 Bluetooth kernel plugin differs from the original; installation
+# requires copying it to the active taiHEN path and rebooting.
+# This build is experimental and targets the same Vita firmware 3.65.
 curl --fail --location --silent --show-error \
   https://raw.githubusercontent.com/ironmanx75/vitaplay-release/main/VitaPlay-beta.vpk \
   -o /tmp/VitaPlay-original.vpk
@@ -29,10 +33,15 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-v7-wifi-audio-negotiation.vpk")
+dest = Path("out/VitaPlay-v8-wifi-audio-handoff.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
+    updated_plugin = b.read("vitaplaybt.skprx")
     original_exe = a.read("eboot.bin")
+    if updated_plugin == original_plugin:
+        sys.exit("ERROR: v8 kernel plugin identical to original; handoff was not compiled")
+    if b"Wi-Fi handoff" not in updated_plugin:
+        sys.exit("ERROR: no Bluetooth handoff marker in built kernel plugin")
     updated_exe = b.read("eboot.bin")
     if original_exe == updated_exe:
         sys.exit("ERROR: compiled eboot did not change")
@@ -52,16 +61,23 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: v7 stream lifecycle logging was not compiled")
     if b"CarPlay session active - v7 Wi-Fi audio negotiation diagnostic" not in updated_exe:
         sys.exit("ERROR: compiled binary lacks v7 RECORD marker")
+    if b"v8 Wi-Fi handoff requested" not in updated_exe:
+        sys.exit("ERROR: v8 handoff integration absent from eboot")
+    if b"v8 HANDOFF NOT ATTEMPTED" not in updated_exe:
+        sys.exit("ERROR: v8 plugin API capability check absent")
     with ZipFile(dest, "w") as out:
         for item in b.infolist():
-            payload = original_plugin if item.filename == "vitaplaybt.skprx" else b.read(item.filename)
+            payload = b.read(item.filename)
             out.writestr(item, payload)
 with ZipFile(dest) as out:
     if out.testzip() is not None:
         sys.exit("ERROR: VPK failed ZIP integrity")
-    if out.read("vitaplaybt.skprx") != original_plugin:
-        sys.exit("ERROR: Bluetooth kernel plugin changed")
+    if out.read("vitaplaybt.skprx") != updated_plugin:
+        sys.exit("ERROR: rebuilt Bluetooth plugin not included")
+    if out.read("vitaplaybt.skprx") == original_plugin:
+        sys.exit("ERROR: packaged old Bluetooth plugin")
 print("VPK:", dest, dest.stat().st_size)
 print("Original plugin SHA256:", hashlib.sha256(original_plugin).hexdigest())
+print("v8 plugin SHA256:", hashlib.sha256(updated_plugin).hexdigest())
 print("Compiled eboot SHA256:", hashlib.sha256(updated_exe).hexdigest())
 PY
