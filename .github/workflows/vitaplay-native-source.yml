@@ -38,8 +38,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git config user.name 'github-actions[bot]'
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git -C "${GITHUB_WORKSPACE}" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "${GITHUB_WORKSPACE}" config user.name 'github-actions[bot]'
           git add vitaplay-native/
           git commit -m 'VitaPlay native: commit v11 full edited C source and matching kernel plugin' || exit 0
           git push origin HEAD:experiment/vitaplay-native-hybrid-v12-20261117
