@@ -1,0 +1,20 @@
+vitaplaybt:
+  attributes: 0
+  version:
+    major: 1
+    minor: 4
+  main:
+    start: module_start
+    stop: module_stop
+  libraries:
+    VitaPlayBt:
+      syscall: true
+      functions:
+        - vpbt_status
+        - vpbt_read
+        - vpbt_write
+        - vpbt_audio_read
+        - vpbt_audio_packets
+        - vpbt_audio_dropped
+        - vpbt_audio_cid
+        - vpbt_audio_enable
