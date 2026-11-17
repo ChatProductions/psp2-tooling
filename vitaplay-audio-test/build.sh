@@ -9,6 +9,8 @@ cp vitaplay-audio-test/ntp.c upstream/vitaplay/src/ntp.c
 python3 vitaplay-audio-test/aac_patch.py
 # Diagnostic-only: distinguish TCP close vs socket error on AirPlay control/event.
 python3 vitaplay-audio-test/disconnect_diag.py
+# v7: Wi-Fi audio setup-capability negotiation and event command dispatch.
+python3 vitaplay-audio-test/wifi_audio_v7.py
 
 # The official full VitaSDK image includes the target libraries.
 make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
@@ -27,7 +29,7 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-v6-disconnect-diagnostics.vpk")
+dest = Path("out/VitaPlay-v7-wifi-audio-negotiation.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
     original_exe = a.read("eboot.bin")
@@ -42,6 +44,14 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: v5 mDNS fix version marker missing from eboot")
     if b"v6 control TCP peer EOF" not in updated_exe:
         sys.exit("ERROR: v6 disconnect diagnostics absent from eboot")
+    if b"v7 initial SETUP proposed features" not in updated_exe:
+        sys.exit("ERROR: v7 AirPlay feature negotiation was not compiled")
+    if b"v7 event channel POST /command" not in updated_exe:
+        sys.exit("ERROR: v7 event-channel command handling was not compiled")
+    if b"v7 stream lifecycle command" not in updated_exe:
+        sys.exit("ERROR: v7 stream lifecycle logging was not compiled")
+    if b"CarPlay session active - v7 Wi-Fi audio negotiation diagnostic" not in updated_exe:
+        sys.exit("ERROR: compiled binary lacks v7 RECORD marker")
     with ZipFile(dest, "w") as out:
         for item in b.infolist():
             payload = original_plugin if item.filename == "vitaplaybt.skprx" else b.read(item.filename)
