@@ -54,8 +54,8 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: timing diagnostics missing from new eboot")
     if b"native AAC decoder ready" not in updated_exe:
         sys.exit("ERROR: native AAC decoder diagnostic not present in eboot")
-    if b"v5 mDNS audio capability consistency test" not in updated_exe:
-        sys.exit("ERROR: v5 mDNS fix version marker missing from eboot")
+    if b"VitaPlay starting - v8 Wi-Fi audio Bluetooth handoff test" not in updated_exe:
+        sys.exit("ERROR: v8 startup marker missing from eboot")
     if b"v6 control TCP peer EOF" not in updated_exe:
         sys.exit("ERROR: v6 disconnect diagnostics absent from eboot")
     if b"v7 initial SETUP proposed features" not in updated_exe:
