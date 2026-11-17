@@ -1,9 +1,9 @@
-name: VitaPlay v7 WiFi audio negotiation
+name: VitaPlay v9 hybrid BT audio WiFi video
 
 on:
   push:
     branches:
-      - experiment/vitaplay-wifi-audio-v7-20261117
+      - experiment/vitaplay-hybrid-bt-audio-v9-20261117
     paths:
       - .github/workflows/vitaplay-audio-test.yml
       - vitaplay-audio-test/**
@@ -22,9 +22,40 @@ jobs:
       - name: Build VitaPlay from upstream C source
         shell: bash
         run: bash vitaplay-audio-test/build.sh
-      - name: Upload compiled VPK
+      - name: Package VitaPlay v9 with the matching kernel plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import hashlib
+          vpk=Path("out/VitaPlay-v9-BluetoothAudio-WiFiVideo.vpk")
+          assert vpk.is_file()
+          with ZipFile(vpk) as z:
+              assert z.testzip() is None
+              plugin=z.read("vitaplaybt.skprx")
+              assert "eboot.bin" in z.namelist()
+          companion=Path("upstream/vitaplay/btplugin/vitaplaybt.skprx").read_bytes()
+          assert plugin==companion, "VPK plugin mismatch"
+          elf=Path("upstream/vitaplay/btplugin/build/vitaplaybt.elf").read_bytes()
+          assert b"vpbt_audio_read" in elf, "hybrid packet reader absent"
+          assert b"v9 hybrid SBC RTP" in elf, "hybrid receive logging absent"
+          out=Path("out/VitaPlay-v9-BluetoothAudio-WiFiVideo-Test.zip")
+          with ZipFile(out,"w",compression=ZIP_DEFLATED) as z:
+              z.write(vpk,vpk.name)
+              z.writestr("vitaplaybt.skprx",plugin)
+              z.write("vitaplay-audio-test/README-v9.md","README.md")
+              z.write("upstream/vitaplay/vendor/libsbc/LICENSE","Google-libsbc-LICENSE")
+          with ZipFile(out) as z: assert z.testzip() is None
+          print("VitaPlay v9 ZIP",out,out.stat().st_size)
+          print("plugin_sha256",hashlib.sha256(plugin).hexdigest())
+          PY
+      - name: Upload compiled VPK and complete hybrid ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlay-v7-wifi-audio-negotiation
-          path: out/*.vpk
+          name: VitaPlay-v9-BluetoothAudio-WiFiVideo
+          path: |
+            out/*.vpk
+            out/*.zip
           if-no-files-found: error
