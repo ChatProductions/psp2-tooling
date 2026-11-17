@@ -1,0 +1,32 @@
+name: VitaPlay v12 native hybrid source build
+
+on:
+  push:
+    branches:
+      - experiment/vitaplay-native-hybrid-v12-20261117
+    paths:
+      - vitaplay-native/**
+      - .github/workflows/vitaplay-native-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:2026.08
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build source directly (app plus Bluetooth kernel plugin)
+        shell: bash
+        run: bash vitaplay-native/build-native.sh
+      - name: Upload complete native VitaPlay v12 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlay-v12-Native-Hybrid-PANGuard-SBC
+          path: |
+            out/*.vpk
+            out/*.zip
+          if-no-files-found: error
