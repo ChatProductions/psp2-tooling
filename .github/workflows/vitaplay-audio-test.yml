@@ -35,7 +35,9 @@ jobs:
           with ZipFile(vpk) as z:
               assert z.testzip() is None
               plugin=z.read("vitaplaybt.skprx")
-              assert b"v8 Wi-Fi handoff" in plugin
+              kernel_elf=Path("upstream/vitaplay/btplugin/build/vitaplaybt.elf").read_bytes()
+              assert b"v8 Wi-Fi handoff" in kernel_elf
+              assert b"vpbt_handoff_disconnect" in kernel_elf
               assert b"eboot.bin" in z.namelist()
           standalone=Path("upstream/vitaplay/btplugin/vitaplaybt.skprx").read_bytes()
           assert plugin==standalone, "VPK kernel plugin differs from built plugin"
