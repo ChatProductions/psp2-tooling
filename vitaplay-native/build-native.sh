@@ -4,6 +4,7 @@ set -euo pipefail
 # No v5-v11 patch scripts, no patching existing VPKs, no private MFi keys.
 git clone --depth 1 https://github.com/ironmanx75/vitaplay-release.git upstream
 git -C upstream checkout --detach cb0d0dcb7e952d8e5c068843fe4917c3a31ebf7c
+mkdir -p upstream/vitaplay/vendor
 git clone --depth 1 https://github.com/google/libsbc.git upstream/vitaplay/vendor/libsbc
 git -C upstream/vitaplay/vendor/libsbc checkout --detach 6e505650145c9973d08a0bdd5e5f5e1914305e40
 # All edited C/H files are SOURCE files committed in vitaplay-native/
@@ -30,7 +31,6 @@ userelf=Path("upstream/vitaplay/build/VitaPlay.elf").read_bytes()
 assert b"v12 PAN GUARD reject BNEP" in elf
 assert b"vpbt_pan_guard" in elf
 assert b"v12 Bluetooth PAN guard requested" in userelf
-assert b"HYBRID_PLC_BURST_MAX" not in userelf or True
 assert b"PLCskipped" in userelf
 assert b"v11 MANUAL SBC ENABLE" in userelf
 outvpk=Path("out/VitaPlay-v12-Native-Hybrid-PANGuard-SBC.vpk")
