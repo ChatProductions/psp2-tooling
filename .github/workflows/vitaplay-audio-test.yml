@@ -1,9 +1,9 @@
-name: VitaPlay v7 WiFi audio negotiation
+name: VitaPlay v8 Bluetooth to WiFi audio handoff
 
 on:
   push:
     branches:
-      - experiment/vitaplay-wifi-audio-v7-20261117
+      - experiment/vitaplay-wifi-audio-v8-bthandoff-20261117
     paths:
       - .github/workflows/vitaplay-audio-test.yml
       - vitaplay-audio-test/**
@@ -22,9 +22,37 @@ jobs:
       - name: Build VitaPlay from upstream C source
         shell: bash
         run: bash vitaplay-audio-test/build.sh
-      - name: Upload compiled VPK
+      - name: Bundle and validate VPK plus matching Bluetooth kernel plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import hashlib
+          vpk=Path("out/VitaPlay-v8-wifi-audio-handoff.vpk")
+          assert vpk.is_file()
+          with ZipFile(vpk) as z:
+              assert z.testzip() is None
+              plugin=z.read("vitaplaybt.skprx")
+              assert b"v8 Wi-Fi handoff" in plugin
+              assert b"eboot.bin" in z.namelist()
+          standalone=Path("upstream/vitaplay/btplugin/vitaplaybt.skprx").read_bytes()
+          assert plugin==standalone, "VPK kernel plugin differs from built plugin"
+          output=Path("out/VitaPlay-v8-Bluetooth-WiFi-Audio-Test.zip")
+          with ZipFile(output,"w",compression=ZIP_DEFLATED) as z:
+              z.write(vpk,vpk.name)
+              z.writestr("vitaplaybt.skprx",plugin)
+              z.write("vitaplay-audio-test/README-v8.md","README.md")
+          with ZipFile(output) as z: assert z.testzip() is None
+          print("VPK:",vpk.stat().st_size,"plugin sha256:",hashlib.sha256(plugin).hexdigest())
+          print("ZIP:",output,output.stat().st_size)
+          PY
+      - name: Upload VPK and plugin test ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlay-v7-wifi-audio-negotiation
-          path: out/*.vpk
+          name: VitaPlay-v8-Bluetooth-WiFi-Audio-Test
+          path: |
+            out/*.zip
+            out/*.vpk
           if-no-files-found: error
