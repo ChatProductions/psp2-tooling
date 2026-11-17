@@ -75,7 +75,7 @@ one("src/session.c",
     '            for (size_t i = 0; i < proposal->count; ++i) {\n'
     '                const pl_node *item = proposal->items[i];\n'
     '                if (!item || item->type != PL_STRING) continue;\n'
-    '                const char *name = item->v.s;\n'
+    '                const char *name = item->str;\n'
     '                if (name && (!strcmp(name, "iAPChannel") || !strcmp(name, "viewAreas")))\n'
     '                    pl_push(features, pl_str(name));\n'
     '            }\n'
