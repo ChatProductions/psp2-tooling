@@ -1,9 +1,9 @@
-name: VitaPlay v6 disconnect diagnostics
+name: VitaPlay v7 WiFi audio negotiation
 
 on:
   push:
     branches:
-      - experiment/vitaplay-audio-timing-20261102
+      - experiment/vitaplay-wifi-audio-v7-20261117
     paths:
       - .github/workflows/vitaplay-audio-test.yml
       - vitaplay-audio-test/**
@@ -25,6 +25,6 @@ jobs:
       - name: Upload compiled VPK
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlay-v6-disconnect-diagnostics
+          name: VitaPlay-v7-wifi-audio-negotiation
           path: out/*.vpk
           if-no-files-found: error
