@@ -38,6 +38,27 @@ static int16_t g_pcm[HYBRID_RING*2u];
 static volatile unsigned g_head, g_tail;
 static volatile unsigned g_received, g_decoded, g_bad, g_lost_seq, g_overflows;
 static volatile unsigned g_underruns, g_silence, g_stale, g_played;
+/* SBC synthesis-based concealment uses the last decoded subband state to
+ * gracefully fade missing media slots. It does NOT fabricate lost music.
+ * Hard cap keeps unknown large RTP gaps from adding excessive latency.
+ */
+static volatile unsigned g_plc_blocks, g_plc_skipped, g_seq_reordered;
+#define HYBRID_PLC_BURST_MAX 4u
+
+static int hybrid_enqueue_pcm(const int16_t pcm[HYBRID_GRAIN*2u]) {
+    unsigned head=g_head;
+    unsigned tail=g_tail;
+    if (head-tail >= HYBRID_MAX_BUFFER) {
+        ++g_overflows;
+        return -1;
+    }
+    unsigned offset=(head&HYBRID_MASK)*2u;
+    memcpy(g_pcm+offset,pcm,HYBRID_GRAIN*2u*sizeof(int16_t));
+    __sync_synchronize();
+    g_head=head+HYBRID_GRAIN;
+    return 0;
+}
+
 static volatile int g_port = -1;
 static volatile int g_started;
 static volatile int g_rx_started;
@@ -63,6 +84,8 @@ static void *hybrid_rx(void *unused) {
     g_rx_started=1;
     int have_seq=0;
     uint16_t prev_seq=0;
+    struct sbc_frame prev_shape={0};
+    int have_shape=0;
 
     for (;;) {
         int n=vpbt_audio_read(pkt,sizeof(pkt));
@@ -83,9 +106,17 @@ static void *hybrid_rx(void *unused) {
         }
 
         uint16_t seq=(uint16_t)(((unsigned)pkt[2]<<8)|pkt[3]);
+        unsigned missing_this_packet=0;
         if (have_seq) {
             unsigned delta=(uint16_t)(seq-prev_seq);
-            if(delta>1 && delta<0x8000u) g_lost_seq += delta-1;
+            if (delta==0 || delta>=0x8000u) {
+                ++g_seq_reordered;
+                continue; /* duplicate or late packet, avoid time reversal */
+            }
+            if (delta>1) {
+                missing_this_packet=delta-1;
+                g_lost_seq += missing_this_packet;
+            }
         }
         prev_seq=seq;
         have_seq=1;
@@ -101,6 +132,30 @@ static void *hybrid_rx(void *unused) {
             continue;
         }
 
+        /* Decode up to four missing 23ms SBC media packets using zero
+         * sub-band synthesis. This produces a brief decaying waveform
+         * rather than an abrupt discontinuity, and preserves playback
+         * timing through short reception holes. Never queue arbitrarily
+         * long gaps, because that would grow latency.
+         */
+        if (missing_this_packet && have_shape) {
+            unsigned plc=missing_this_packet > HYBRID_PLC_BURST_MAX ?
+                         HYBRID_PLC_BURST_MAX : missing_this_packet;
+            for (unsigned p=0;p<plc;p++) {
+                int ok=1;
+                for (unsigned j=0;j<8;j++) {
+                    struct sbc_frame blank=prev_shape;
+                    int16_t *out=pcm+(j*128u*2u);
+                    if (sbc_decode(&decoder,NULL,0,&blank,out,2,out+1,2)!=0) {
+                        ok=0; break;
+                    }
+                }
+                if (ok && hybrid_enqueue_pcm(pcm)==0) ++g_plc_blocks;
+                else ++g_plc_skipped;
+            }
+            g_plc_skipped += missing_this_packet-plc;
+        }
+
         int good=1;
         for(unsigned i=0;i<8;i++) {
             struct sbc_frame current;
@@ -113,18 +168,9 @@ static void *hybrid_rx(void *unused) {
         }
         if(!good) continue;
         ++g_decoded;
-
-        unsigned head=g_head;
-        unsigned tail=g_tail;
-        if(head-tail>=HYBRID_MAX_BUFFER) {
-            ++g_overflows;
-            continue; /* avoid lagging seconds behind iPhone */
-        }
-        unsigned offset=(head&HYBRID_MASK)*2u;
-        /* g_head is always HYBRID_GRAIN-aligned and the 32K ring divides it. */
-        memcpy(g_pcm+offset,pcm,sizeof(pcm));
-        __sync_synchronize();
-        g_head=head+HYBRID_GRAIN;
+        prev_shape=shape;
+        have_shape=1;
+        hybrid_enqueue_pcm(pcm);
         if((g_received % 256u)==0)
             vp_log("v9 BT RX packets=%u decoded=%u RTP missing=%u new kernel drops=%d overflow=%u",
                    g_received,g_decoded,g_lost_seq,
@@ -209,10 +255,10 @@ static void *hybrid_out(void *unused) {
         if(rc<0 && g_played<=5u) vp_log("v9 BT sceAudioOutOutput error=0x%08x",(unsigned)rc);
         if(g_played-last_log>=128u) {
             vp_log("v9 BT SOUND blocks=%u buf_ms=%u rx=%u decoded=%u "
-                   "new_kernel_drops=%d missing_rtp=%u underflows=%u silences=%u overflow=%u port=%d",
+                   "new_kernel_drops=%d missing_rtp=%u PLC=%u PLCskipped=%u underflows=%u silences=%u overflow=%u port=%d",
                    g_played,(g_head-g_tail)*1000u/HYBRID_RATE,
                    g_received,g_decoded,vpbt_audio_dropped()-g_drop_base,
-                   g_lost_seq,g_underruns,g_silence,g_overflows,g_port);
+                   g_lost_seq,g_plc_blocks,g_plc_skipped,g_underruns,g_silence,g_overflows,g_port);
             last_log=g_played;
         }
     }
