@@ -42,8 +42,11 @@ with ZipFile(original) as a, ZipFile(built) as b:
     original_exe = a.read("eboot.bin")
     if updated_plugin == original_plugin:
         sys.exit("ERROR: v8 kernel plugin identical to original; handoff was not compiled")
-    if b"Wi-Fi handoff" not in updated_plugin:
-        sys.exit("ERROR: no Bluetooth handoff marker in built kernel plugin")
+    kernel_elf = Path("upstream/vitaplay/btplugin/build/vitaplaybt.elf").read_bytes()
+    if b"v8 Wi-Fi handoff" not in kernel_elf:
+        sys.exit("ERROR: handoff code missing from compiled kernel ELF")
+    if b"vpbt_handoff_disconnect" not in kernel_elf:
+        sys.exit("ERROR: kernel export missing from compiled ELF")
     updated_exe = b.read("eboot.bin")
     if original_exe == updated_exe:
         sys.exit("ERROR: compiled eboot did not change")
