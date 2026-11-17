@@ -1,9 +1,9 @@
-name: VitaPlay v9 hybrid BT audio WiFi video
+name: VitaPlay v10 video-first Bluetooth RTP diagnostics
 
 on:
   push:
     branches:
-      - experiment/vitaplay-hybrid-bt-audio-v9-20261117
+      - experiment/vitaplay-v10-video-first-rtp-diagnostics-20261117
     paths:
       - .github/workflows/vitaplay-audio-test.yml
       - vitaplay-audio-test/**
@@ -30,7 +30,7 @@ jobs:
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import hashlib
-          vpk=Path("out/VitaPlay-v9-BluetoothAudio-WiFiVideo.vpk")
+          vpk=Path("out/VitaPlay-v10-VideoFirst-BluetoothAudio.vpk")
           assert vpk.is_file()
           with ZipFile(vpk) as z:
               assert z.testzip() is None
@@ -40,12 +40,13 @@ jobs:
           assert plugin==companion, "VPK plugin mismatch"
           elf=Path("upstream/vitaplay/btplugin/build/vitaplaybt.elf").read_bytes()
           assert b"vpbt_audio_read" in elf, "hybrid packet reader absent"
-          assert b"v9 hybrid SBC RTP" in elf, "hybrid receive logging absent"
-          out=Path("out/VitaPlay-v9-BluetoothAudio-WiFiVideo-Test.zip")
+          assert b"v10 BT RTP" in elf, "prequeue RTP diagnostic absent"
+          assert b"vpbt_audio_enable" in elf, "video-first kernel toggle absent"
+          out=Path("out/VitaPlay-v10-VideoFirst-BluetoothAudio-Test.zip")
           with ZipFile(out,"w",compression=ZIP_DEFLATED) as z:
               z.write(vpk,vpk.name)
               z.writestr("vitaplaybt.skprx",plugin)
-              z.write("vitaplay-audio-test/README-v9.md","README.md")
+              z.write("vitaplay-audio-test/README-v10.md","README.md")
               z.write("upstream/vitaplay/vendor/libsbc/LICENSE","Google-libsbc-LICENSE")
           with ZipFile(out) as z: assert z.testzip() is None
           print("VitaPlay v9 ZIP",out,out.stat().st_size)
@@ -54,7 +55,7 @@ jobs:
       - name: Upload compiled VPK and complete hybrid ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlay-v9-BluetoothAudio-WiFiVideo
+          name: VitaPlay-v10-VideoFirst-BluetoothAudio
           path: |
             out/*.vpk
             out/*.zip
