@@ -16,6 +16,9 @@
 
 #include "btboot.h"
 #include "btaudio.h"
+
+extern int vpbt_pan_guard(int enabled);
+static int g_pan_guard_setting = 1; /* default: no phantom BT Ethernet */
 #include "common.h"
 #include "crypto.h"
 #include "identity.h"
@@ -84,6 +87,7 @@ static void load_config(void) {
         else if (strncmp(line, "wifi_pass=", 10) == 0) snprintf(c->wifi_pass, sizeof(c->wifi_pass), "%s", line + 10);
         else if (strncmp(line, "wifi_channel=", 13) == 0) c->wifi_channel = atoi(line + 13);
         else if (strncmp(line, "wifi_security=", 14) == 0) c->wifi_security = atoi(line + 14);
+        else if (strncmp(line, "pan_guard=", 10) == 0) g_pan_guard_setting = atoi(line + 10) != 0;
         else if (strncmp(line, "night_mode=", 11) == 0) {
             const char *v = line + 11;
             c->night_mode = strcmp(v, "night") == 0 ? 1 : strcmp(v, "day") == 0 ? 0 : -1;
@@ -255,7 +259,7 @@ int main(void) {
     sceIoMkdir(APP_DIR, 0777);
     sceIoMkdir(APP_DIR "/offline-mfi", 0777);
     log_init();
-    vp_log("VitaPlay starting - v11 V7 video baseline with manual v10 Bluetooth SBC plugin");
+    vp_log("VitaPlay starting - v12 NATIVE SOURCE hybrid PAN route guard and SBC recovery");
 
     vita2d_init();
     vita2d_set_clear_color(COLOR_BG);
@@ -281,6 +285,13 @@ int main(void) {
     write_bootstrap_file();
     mdns_start();
     session_server_start();
+    /* v12: disable unwanted BNEP/PAN network route while keeping RFCOMM,
+     * Bluetooth A2DP media, and 802.11 CarPlay intact. Can be disabled
+     * for recovery with pan_guard=0 in ux0:data/VitaPlay/config.txt.
+     */
+    int pan_result = vpbt_pan_guard(g_pan_guard_setting);
+    vp_log("v12 Bluetooth PAN guard requested=%d actual=%d; Wi-Fi is CarPlay route",
+           g_pan_guard_setting, pan_result);
     /* On-device Bluetooth iAP2 bootstrap: replaces the Mac bridge. Needs the kernel plugin loaded
      * at boot (see README); it waits quietly for the iPhone otherwise. */
     btboot_start();
@@ -401,6 +412,7 @@ int main(void) {
     }
 
 quit:
+    vpbt_pan_guard(0);
     video_shutdown();
     vita2d_fini();
     sceKernelExitProcess(0);
