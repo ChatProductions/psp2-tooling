@@ -20,6 +20,8 @@ git -C upstream/vitaplay/vendor/libsbc checkout --detach 6e505650145c9973d08a0bd
 python3 vitaplay-audio-test/hybrid_v9.py
 # v10: keep video initialization first; enable media capture after STREAMING.
 python3 vitaplay-audio-test/video_first_v10.py
+# v11: retain v7 CarPlay bootstrap; L+R manually enables the packet reader.
+python3 vitaplay-audio-test/manual_hybrid_v11.py
 
 # The official full VitaSDK image includes the target libraries.
 make -C upstream/vitaplay -j1 VITASDK="${VITASDK}"
@@ -38,7 +40,7 @@ import sys
 
 original = Path("/tmp/VitaPlay-original.vpk")
 built = Path("upstream/vitaplay/VitaPlay.vpk")
-dest = Path("out/VitaPlay-v10-VideoFirst-BluetoothAudio.vpk")
+dest = Path("out/VitaPlay-v11-V7-Video-Manual-BTAudio.vpk")
 with ZipFile(original) as a, ZipFile(built) as b:
     original_plugin = a.read("vitaplaybt.skprx")
     updated_plugin = b.read("vitaplaybt.skprx")
@@ -55,10 +57,12 @@ with ZipFile(original) as a, ZipFile(built) as b:
         sys.exit("ERROR: timing diagnostics missing from new eboot")
     if b"native AAC decoder ready" not in updated_exe:
         sys.exit("ERROR: native AAC decoder diagnostic not present in eboot")
-    if b"v10 VIDEO-FIRST CarPlay + Bluetooth SBC diagnostics" not in updated_exe:
-        sys.exit("ERROR: missing v10 VIDEO-FIRST startup marker")
-    if b"v10 VIDEO STREAMING: enable in-app Bluetooth SBC receiver now" not in updated_exe:
-        sys.exit("ERROR: video-first gating logic missing from compiled binary")
+    if b"v11 V7 video baseline with manual v10 Bluetooth SBC plugin" not in updated_exe:
+        sys.exit("ERROR: missing v11 V7 video baseline marker")
+    if b"v11 MANUAL SBC ENABLE" not in updated_exe:
+        sys.exit("ERROR: missing v11 manual SBC activation")
+    if b"v10 VIDEO STREAMING: enable in-app Bluetooth SBC receiver now" in updated_exe:
+        sys.exit("ERROR: v10 automatic SBC activation must be removed")
     if b"v10 kernel Bluetooth SBC capture enabled" not in updated_exe:
         sys.exit("ERROR: usermode kernel capture toggle not compiled")
     if b"v9 HYBRID PLAYBACK START" not in updated_exe:
