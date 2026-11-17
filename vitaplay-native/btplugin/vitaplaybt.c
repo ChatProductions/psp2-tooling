@@ -182,6 +182,27 @@ static volatile unsigned g_hybrid_cid;
  * delivery problems from our app/queue decoding.
  */
 static volatile int g_hybrid_enabled;
+
+/* Optional route guard for the iPhone's unexpected Bluetooth PAN adapter.
+ * The iPhone was observed opening L2CAP PSM 0x000F (BNEP) while CarPlay
+ * should reach our 192.168.x.x address over Wi-Fi. BNEP is independent
+ * of iAP2/RFCOMM (PSM 3) and A2DP/AVDTP (PSM 0x0019).
+ *
+ * Only refuse BNEP requests on the same connection as our iAP2 peer.
+ * Do not block any other Bluetooth devices or the audio channel.
+ * Sending the L2CAP negative response happens in the worker, NEVER
+ * inside the SceBt RX hook (where calling BT send/lock can deadlock).
+ */
+static volatile int g_pan_guard;
+static volatile int g_pan_reject_pending;
+static volatile unsigned g_pan_reject_id;
+static volatile unsigned g_pan_reject_scid;
+static volatile void *g_pan_reject_conn;
+static volatile unsigned g_pan_refused;
+int vpbt_pan_guard(int enabled) {
+    g_pan_guard = enabled ? 1 : 0;
+    return g_pan_guard;
+}
 static volatile unsigned g_rtp_candidate,g_rtp_truncated,g_rtp_rejected;
 static volatile unsigned g_rtp_prequeue_missing,g_rtp_duplicate;
 static volatile unsigned g_rtp_prev_seq,g_rtp_have_seq;
@@ -279,6 +300,22 @@ static void log_line(const char *fmt, ...) {
 
 /* The hook. Runs in SceBt's RX thread context -> do the minimum: snapshot into the ring. */
 static int hook_l2cap_sig(void *conn, const unsigned char *pdu, int len) {
+    /* L2CAP ACL: 8B HCI/L2CAP prefix, 4B signal header, PSM+SCID.
+     * 0x000f = BNEP/PAN. Reject this one request only when VitaPlay
+     * explicitly enabled the PAN guard for the connected iAP2 peer.
+     */
+    if (g_pan_guard && conn == g_conn && pdu && len >= 16 &&
+        pdu[6] == 0x01 && pdu[7] == 0x00 &&
+        pdu[8] == 0x02 && pdu[10] == 0x04 && pdu[11] == 0x00 &&
+        pdu[12] == 0x0f && pdu[13] == 0x00) {
+        g_pan_reject_conn = conn;
+        g_pan_reject_id = pdu[9];
+        g_pan_reject_scid = pdu[14] | ((unsigned)pdu[15] << 8);
+        __sync_synchronize();
+        g_pan_reject_pending = 1;
+        ++g_pan_refused;
+        return 0; /* Do not let SceBt accept BNEP before our response. */
+    }
     hybrid_capture(pdu,len); /* BEFORE the old iAP2 CID filtering */
     /* Only snapshot the channels we drive: L2CAP signaling (CID 1), our RFCOMM channel and our SDP
      * channel. This keeps the iPhone's high-volume PAN/mDNS traffic from flooding the ring. */
@@ -437,12 +474,37 @@ static void drain(void) {
     }
 }
 
+/* Async L2CAP CONNECTION_RSP(result=2: PSM not supported) for BNEP.
+ * This uses the exact same signaling sender used by VitaPlay for RFCOMM.
+ */
+static void pan_reject_reply(void) {
+    if (!g_pan_reject_pending || !g_l2cap_send || !g_bt_lock) return;
+    __sync_synchronize();
+    void *peer = (void *)g_pan_reject_conn;
+    unsigned id = g_pan_reject_id, scid = g_pan_reject_scid;
+    if (g_bt_lock() != 0) return;
+    static const char payload_format[] = "#";
+    unsigned char response[12] = {
+        0x03, (unsigned char)id, 0x08, 0x00,
+        0x00, 0x00,  /* DCID: none assigned */
+        (unsigned char)scid, (unsigned char)(scid >> 8),
+        0x02, 0x00,  /* Result: PSM not supported */
+        0x00, 0x00   /* Status */
+    };
+    int rc = g_l2cap_send(peer, 1, payload_format, response, sizeof(response));
+    g_bt_unlock();
+    g_pan_reject_pending = 0;
+    log_line("v12 PAN GUARD reject BNEP PSM=0x000f id=%u scid=0x%04x result=2 send=0x%08x total=%u",
+             id, scid, (unsigned)rc, g_pan_refused);
+}
+
 static int worker(SceSize args, void *argp) {
     unsigned last_dropped = 0;
     unsigned last_hybrid_seen=0;
     unsigned ticks=0;
     while (!g_exiting) {
         drain();
+        pan_reject_reply();
         if (g_dropped != last_dropped) {
             log_line("(ring overflow: %u PDUs dropped)", g_dropped);
             last_dropped = g_dropped;
