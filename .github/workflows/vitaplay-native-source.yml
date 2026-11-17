@@ -1,0 +1,45 @@
+name: VitaPlay native source bootstrap
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/vitaplay-native-hybrid-v12-20261117
+    paths:
+      - .github/workflows/vitaplay-native-source.yml
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:2026.08
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: One-time source materialization from proven v11 implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash vitaplay-audio-test/build.sh
+          mkdir -p vitaplay-native/src vitaplay-native/btplugin
+          cp upstream/vitaplay/src/*.[ch] vitaplay-native/src/
+          cp upstream/vitaplay/Makefile vitaplay-native/Makefile
+          cp upstream/vitaplay/btplugin/vitaplaybt.c vitaplay-native/btplugin/
+          cp upstream/vitaplay/btplugin/exports.yml vitaplay-native/btplugin/
+          cp upstream/vitaplay/btplugin/Makefile vitaplay-native/btplugin/
+          test -f vitaplay-native/src/btaudio.c
+          grep -q 'v11 MANUAL SBC ENABLE' vitaplay-native/src/main.c
+          grep -q 'v10 BT RTP' vitaplay-native/btplugin/vitaplaybt.c
+          echo 'Canonical native source snapshot produced.'
+      - name: Commit canonical edited source (no binary patch stacking)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git add vitaplay-native/
+          git commit -m 'VitaPlay native: commit v11 full edited C source and matching kernel plugin' || exit 0
+          git push origin HEAD:experiment/vitaplay-native-hybrid-v12-20261117
